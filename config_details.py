@@ -1,0 +1,7 @@
+MODEL_NAME = "mistral"
+DOCS_PATH = "./your_docs"
+DB_PATH = "./your_db"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+BUCKET_NAME = ""
+REGION_NAME = ""
+UPLOAD_PIN = "1964"
