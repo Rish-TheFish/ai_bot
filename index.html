@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🧠 AI Compliance Assistant</title>
+    <title>🧠 AI Question Answering Assistant</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -141,6 +141,61 @@
             background: #e9ecef;
         }
         .hidden { display: none !important; }
+        
+        /* Disabled button styling */
+        .disabled-btn {
+            opacity: 0.5 !important;
+            cursor: not-allowed !important;
+            background: #6c757d !important;
+            border-color: #6c757d !important;
+            color: #ffffff !important;
+        }
+        .disabled-btn:hover {
+            opacity: 0.5 !important;
+            background: #6c757d !important;
+            border-color: #6c757d !important;
+            color: #ffffff !important;
+        }
+        .disabled-btn:active {
+            opacity: 0.5 !important;
+            background: #6c757d !important;
+            border-color: #6c757d !important;
+            color: #ffffff !important;
+        }
+        
+        /* Short and detailed answer styling */
+        .short-answer {
+            font-weight: 500;
+            color: #333;
+            line-height: 1.4;
+        }
+        
+        .answer-toggle {
+            color: #667eea;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            text-decoration: underline;
+            margin-top: 5px;
+            display: inline-block;
+        }
+        
+        .answer-toggle:hover {
+            color: #764ba2;
+        }
+        
+                .detailed-answer {
+            margin-top: 10px;
+            padding: 12px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 1em;
+            color: #495057;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .upload-anim, .delete-anim {
             position: relative;
             width: 750px;
@@ -218,12 +273,54 @@
             100% { transform: scale(1); opacity: 0.8; }
         }
         .disabled-chat-input { background: #e9ecef !important; color: #aaa !important; cursor: not-allowed !important; }
+        .disabled-btn {
+            background: #e9ecef !important;
+            color: #aaa !important;
+            cursor: not-allowed !important;
+            opacity: 0.6;
+            border-color: #e9ecef !important;
+        }
         .message strong, .message b {
             font-size: 1.05em;
         }
         .message .emoji, .message span[style*="font-size"] {
             font-size: 1.5em !important;
             vertical-align: middle;
+        }
+        .chat-area, .logsArea {
+            border-top-left-radius: 0;
+            border-top-right-radius: 0;
+        }
+        
+        /* Source toggle styling */
+        .source-toggle {
+            cursor: pointer;
+            color: #007bff;
+            font-weight: bold;
+            margin-left: 5px;
+            user-select: none;
+            transition: color 0.2s;
+        }
+        .source-toggle:hover {
+            color: #0056b3;
+        }
+        .source-summary {
+            font-weight: 500;
+        }
+        .source-detailed {
+            margin-top: 8px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 0.9em;
+            color: #6c757d;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-width: 100%;
+            max-height: 200px;
+            overflow: auto;
         }
     </style>
 </head>
@@ -235,7 +332,7 @@
                     <div class="d-flex flex-column align-items-start" style="min-width:180px;">
                         <!-- Empty space for balance -->
                     </div>
-                    <h2 class="flex-grow-1 mb-0 text-center" style="color:white;"><i class="fas fa-brain"></i> AI Compliance Assistant</h2>
+                    <h2 class="flex-grow-1 mb-0 text-center" style="color:white;"><i class="fas fa-brain"></i> AI Question Answering Assistant</h2>
                     <div class="text-end" style="min-width:220px;">
                         <div class="mb-1">
                             <span class="status-indicator status-disconnected" id="statusIndicator"></span>
@@ -250,7 +347,7 @@
                             <i class="fas fa-comments"></i> Chat
                         </button>
                         <button type="button" class="btn btn-toggle-chat" id="logsTabBtn">
-                            <i class="fas fa-list"></i> Logs
+                            <i class="fas fa-list"></i> Alerts
                         </button>
                         <button type="button" class="btn btn-toggle-chat" id="docsTabBtn">
                             <i class="fas fa-folder-open"></i> Docs
@@ -304,12 +401,17 @@
             <!-- Welcome message above status, left-aligned -->
             <div class="chat-area" id="chatMessages">
                 <div class="message ai-message">
-                    <strong>🤖 AI Assistant:</strong> Welcome! I'm your AI Compliance Assistant. Please upload compliance documents or ask a question to get started.
+                    <strong>🤖 AI Assistant:</strong> Welcome! I'm your AI Question Answering Assistant. Please upload compliance documents or ask a question to get started.
                 </div>
             </div>
-            <div class="chat-area hidden" id="logsArea" style="height: calc(100vh - 200px); overflow-y: auto;">
+            <div class="chat-area hidden" id="logsArea" style="height: calc(100vh - 200px); overflow-y: auto; position: relative;">
+                <button class="btn btn-outline-secondary btn-sm" id="clearLogsBtn" style="position: fixed; top: 10px; right: 10px; z-index: 1000; background: white; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <i class="fas fa-trash"></i> Clear
+                </button>
+                <div id="logsContent" style="padding-top: 50px;">
                 <div class="message ai-message">
                     <strong>📋 System Logs:</strong> System activity and mode changes will appear here.
+                    </div>
                 </div>
             </div>
             <!-- Independent Document Management Area -->
@@ -349,7 +451,7 @@
                         <tr>
                             <th style="width: 50px;"><input type="checkbox" id="selectAllCheckbox" class="form-check-input"></th>
                             <th>Name <span class="sort-arrow" data-col="name" style="cursor:pointer;">▼</span></th>
-                            <th>Tags <span class="sort-arrow" data-col="topics" style="cursor:pointer;">▼</span></th>
+                            <th>Topics <span class="sort-arrow" data-col="topics" style="cursor:pointer;">▼</span></th>
                             <th>Type <span class="sort-arrow" data-col="type" style="cursor:pointer;">▼</span></th>
                             <th>Uploaded <span class="sort-arrow" data-col="uploaded" style="cursor:pointer;">▼</span></th>
                             <th style="width: 120px;">Actions</th>
@@ -570,9 +672,9 @@
                         </button>
                     </div> -->
                     <div class="col-md-2 d-flex justify-content-center">
-                        <button class="btn btn-outline-info w-100" id="batchQnAButton">
-                            <i class="fas fa-question-circle"></i> Batch Q&A
-                        </button>
+                        <button class="btn btn-outline-info w-100" id="batchQnAButton" disabled>
+    <i class="fas fa-question-circle"></i> Upload Questionnaire (No Topics)
+</button>
                     </div>
                     <div class="col-md-2 d-flex justify-content-center">
                         <button class="btn btn-outline-danger w-100" id="clearHistoryBtn">
@@ -582,8 +684,8 @@
                 </div>
                 <!-- Remove uploadPanel div if not used elsewhere -->
                 <!-- Batch Q&A Upload Panel -->
-                <div id="batchQnAPanel" class="hidden mt-3 p-3 border rounded">
-                    <h5><i class="fas fa-question-circle"></i> Batch Q&A Upload</h5>
+<div id="batchQnAPanel" class="hidden mt-3 p-3 border rounded">
+    <h5><i class="fas fa-question-circle"></i> Upload Questionnaire</h5>
                     <div class="file-upload-area" onclick="document.getElementById('batchQnAInput').click()">
                         <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
                         <h5>Click to select a file of questions</h5>
@@ -591,7 +693,7 @@
                         <input type="file" id="batchQnAInput" accept=".pdf,.docx,.txt,.csv,.xml" style="display: none;">
                     </div>
                     <div id="batchQnAFileName" class="mt-2"></div>
-                    <button class="btn btn-primary mt-2" id="batchQnAUploadBtn">Upload & Get Answers</button>
+                    <button class="btn btn-primary mt-2" id="batchQnAUploadBtn" disabled>Upload & Get Answers</button>
                     <button class="btn btn-secondary mt-2 ms-2" id="cancelBatchQnABtn">Cancel</button>
                 </div>
                 <!-- Loading Spinner -->
@@ -688,7 +790,6 @@
     <script>
 let aiInitialized = false;
 let uploadPinCache = null;
-const UPLOAD_PIN = '1964'; // from config_details.py
 let pendingAnimationStop = null;
 
 window.addEventListener('DOMContentLoaded', function() {
@@ -741,11 +842,15 @@ window.addEventListener('DOMContentLoaded', function() {
             const btn = document.getElementById('chatTopicsDropdownBtn');
             if (!menu || !btn) return;
             menu.innerHTML = '';
-            // All Topics option
+            // No Topics option (checkbox)
+            const noneLi = document.createElement('li');
+            noneLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="none" id="chatTopic_none"><label class="form-check-label" for="chatTopic_none">No Topics</label></div>`;
+            menu.appendChild(noneLi);
+            // All Topics option (checkbox)
             const allLi = document.createElement('li');
-            allLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chatTopic_all" checked><label class="form-check-label" for="chatTopic_all">All Topics</label></div>`;
+            allLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chatTopic_all"><label class="form-check-label" for="chatTopic_all">All Topics</label></div>`;
             menu.appendChild(allLi);
-            // Other topics
+            // Other topics (checkboxes)
             (data.topics || []).forEach(topic => {
                 const li = document.createElement('li');
                 li.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="${topic.id}" id="chatTopic_${topic.id}"><label class="form-check-label" for="chatTopic_${topic.id}">${topic.name}</label></div>`;
@@ -754,38 +859,48 @@ window.addEventListener('DOMContentLoaded', function() {
             // Selection logic
             function updateBtnLabel() {
                 const checked = menu.querySelectorAll('.form-check-input:checked');
-                if (checked.length === 0 || checked[0].value === 'all') {
+                if (checked.length === 0 || (checked.length === 1 && checked[0].value === 'none')) {
+                    btn.textContent = 'No Topics';
+                } else if (checked.length > 0 && Array.from(checked).some(cb => cb.value === 'all')) {
                     btn.textContent = 'All Topics';
-                    setChatBarEnabled(false);
                 } else {
-                    const names = Array.from(checked).map(c => menu.querySelector(`label[for="chatTopic_${c.value}"]`).textContent);
-                    btn.textContent = names.join(', ');
-                    setChatBarEnabled(true);
+                    const names = Array.from(checked).filter(cb => cb.value !== 'all' && cb.value !== 'none').map(cb => menu.querySelector(`label[for=\"chatTopic_${cb.value}\"]`).textContent);
+                    btn.textContent = names.length > 0 ? names.join(', ') : 'No Topics';
                 }
             }
             menu.addEventListener('change', function(e) {
-                const target = e.target;
-                if (!target.classList.contains('form-check-input')) return;
-                if (target.value === 'all') {
-                    // If All Topics is checked, uncheck all others
+                if (!e.target.classList.contains('form-check-input')) return;
+                if (e.target.value === 'all' && e.target.checked) {
+                    // Check all topic checkboxes except 'none'
                     menu.querySelectorAll('.form-check-input').forEach(cb => {
-                        cb.checked = (cb.value === 'all');
+                        if (cb.value !== 'none') cb.checked = true;
+                        if (cb.value === 'none') cb.checked = false;
+                    });
+                } else if (e.target.value === 'none' && e.target.checked) {
+                    // Uncheck all others
+                    menu.querySelectorAll('.form-check-input').forEach(cb => {
+                        if (cb.value !== 'none') cb.checked = false;
                     });
                 } else {
-                    // If any other is checked, uncheck All Topics
-                    if (target.checked) {
-                        menu.querySelector('.form-check-input[value="all"]').checked = false;
+                    // If any topic or 'all' is checked, uncheck 'none'
+                    if (e.target.checked) {
+                        menu.querySelector('.form-check-input[value="none"]').checked = false;
                     }
-                    // If none checked, check All Topics
-                    const anyChecked = Array.from(menu.querySelectorAll('.form-check-input')).some(cb => cb.value !== 'all' && cb.checked);
-                    if (!anyChecked) {
-                        menu.querySelector('.form-check-input[value="all"]').checked = true;
+                    // If all topics (not 'all' or 'none') are checked, check 'all'
+                    const topicCheckboxes = Array.from(menu.querySelectorAll('.form-check-input')).filter(cb => cb.value !== 'all' && cb.value !== 'none');
+                    const allChecked = topicCheckboxes.every(cb => cb.checked);
+                    menu.querySelector('.form-check-input[value="all"]').checked = allChecked;
+                    // If not all topics are checked, uncheck 'all'
+                    if (!allChecked) {
+                        menu.querySelector('.form-check-input[value="all"]').checked = false;
                     }
                 }
                 updateBtnLabel();
             });
+            // Set initial state: No Topics checked
+            menu.querySelector('.form-check-input[value="none"]').checked = true;
             updateBtnLabel();
-            attachChatTopicsDropdownHandler(); // Attach the handler every time dropdown is (re)populated
+            attachChatTopicsDropdownHandler && attachChatTopicsDropdownHandler();
         });
     // On DOMContentLoaded, also enforce chat bar state
     document.addEventListener('DOMContentLoaded', function() {
@@ -830,15 +945,23 @@ window.addEventListener('DOMContentLoaded', function() {
         if (isAllTopics) {
             addMessage(`🤖 AI Assistant: <b>Welcome!</b> Please <b>select your topic(s)</b> to get started. The chat bar will be enabled once you choose at least one topic.`, 'ai');
         } else {
-            addMessage(`🤖 AI Assistant: Welcome! I'm your AI Compliance Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai');
+            addMessage(`🤖 AI Assistant: Welcome! I'm your AI Question Answering Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai');
         }
         const history = chatHistories[sessionKey] || [];
         history.forEach(item => {
             addMessage('🧑 You: ' + item.question, 'user');
-            addMessage('🤖 AI: ' + item.answer, 'ai');
+            
+            // Format answer with confidence and sources if available
+            let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
+            if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
+                answerText += `<br><br><strong>Confidence:</strong> ${item.confidence}%`;
+            }
+            if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
+                answerText += `<br><br><strong>Sources:</strong> ${item.sources}`;
+            }
+            addMessage(answerText, 'ai');
         });
-        // Enable/disable chat bar based on topic selection
-        setChatBarEnabled(!isAllTopics);
+        // Do not call setChatBarEnabled here; chat bar enable/disable is handled by setChatBarAndBatchQnAEnabled only
     }
 
     function setChatBarEnabled(enabled) {
@@ -883,6 +1006,8 @@ window.addEventListener('DOMContentLoaded', function() {
                 } else {
                     fetchChatHistory(currentChatSessionKey);
                 }
+                // Also update the Upload Questionnaire button
+                updateUploadQuestionnaireButton();
             });
         }
     }
@@ -916,20 +1041,23 @@ function initializeAI() {
     })
     .then(data => {
         console.log('AI initialization response:', data);
-        if (data.status === 'success') {
+        if (data.status === 'success' && data.ready) {
             aiInitialized = true;
             updateStatus(true);
             const questionInput = document.getElementById('questionInput');
             const askButton = document.getElementById('askButton');
-            // const checkDocsBtn = document.getElementById('checkDocsBtn');
             
             if (questionInput) questionInput.disabled = false;
             if (askButton) askButton.disabled = false;
-            // if (checkDocsBtn) checkDocsBtn.disabled = false;
             console.log('AI initialized successfully');
+        } else if (data.status === 'initializing') {
+            updateStatus('connecting');
+            addLogMessage('🔄 AI Assistant is initializing in background...');
+            // Poll for status every 2 seconds
+            setTimeout(checkAIStatus, 2000);
         } else {
             updateStatus(false);
-            addLogMessage('❌ Failed to initialize AI Assistant: ' + data.error);
+            addLogMessage('❌ Failed to initialize AI Assistant: ' + (data.error || 'Unknown error'));
             console.log('AI initialization failed:', data.error);
         }
     })
@@ -937,6 +1065,34 @@ function initializeAI() {
         updateStatus(false);
         addLogMessage('❌ Error initializing AI: ' + error);
         console.log('AI initialization error:', error);
+    });
+}
+
+function checkAIStatus() {
+    fetch('/document_status')
+    .then(response => response.json())
+    .then(data => {
+        if (data.ready) {
+            aiInitialized = true;
+            updateStatus(true);
+            const questionInput = document.getElementById('questionInput');
+            const askButton = document.getElementById('askButton');
+            
+            if (questionInput) questionInput.disabled = false;
+            if (askButton) askButton.disabled = false;
+            addLogMessage('✅ AI Assistant is ready!');
+            console.log('AI is ready');
+        } else if (data.status === 'initializing') {
+            updateStatus('connecting');
+            addLogMessage('🔄 AI Assistant is still initializing...');
+            setTimeout(checkAIStatus, 2000);
+        } else {
+            updateStatus(false);
+            addLogMessage('❌ AI Assistant initialization failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        addLogMessage('❌ Error checking AI status: ' + error);
     });
 }
 
@@ -1020,6 +1176,87 @@ function setupEventListeners() {
     if (cancelBatchQnABtn && batchQnAPanel) {
         cancelBatchQnABtn.addEventListener('click', function() {
             batchQnAPanel.classList.add('hidden');
+        });
+    }
+    
+    // Add event listeners for batch Q&A file upload
+    const batchQnAInput = document.getElementById('batchQnAInput');
+    const batchQnAUploadBtn = document.getElementById('batchQnAUploadBtn');
+    const batchQnAFileName = document.getElementById('batchQnAFileName');
+    
+    if (batchQnAInput) {
+        batchQnAInput.addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                const fileName = files[0].name;
+                batchQnAFileName.textContent = `Selected: ${fileName}`;
+                batchQnAFileName.style.color = '#28a745';
+                batchQnAUploadBtn.disabled = false;
+            } else {
+                batchQnAFileName.textContent = '';
+                batchQnAUploadBtn.disabled = true;
+            }
+        });
+    }
+    
+    if (batchQnAUploadBtn) {
+        batchQnAUploadBtn.addEventListener('click', function() {
+            const files = batchQnAInput.files;
+            if (files.length === 0) {
+                alert('Please select a file first.');
+                return;
+            }
+            
+            // Show loading spinner
+            const loadingSpinner = document.getElementById('batchQnALoading');
+            if (loadingSpinner) loadingSpinner.style.display = 'flex';
+            
+            // Create FormData for file upload
+            const formData = new FormData();
+            formData.append('file', files[0]);
+            
+            // Upload file and get answers
+            fetch('/upload_questions', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (loadingSpinner) loadingSpinner.style.display = 'none';
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                } else {
+                    // Only show download link, don't display results in chat
+                    if (data.questions && data.answers) {
+                        // Add download link if CSV file is available
+                        if (data.csv_id) {
+                            const downloadLink = `<div style="margin-top: 15px; padding: 10px; background-color: #e7f3ff; border-radius: 5px; border-left: 4px solid #007bff;">
+                                <strong>📊 Questionnaire Processing Complete:</strong> 
+                                <a href="/download_csv/${data.csv_id}" 
+                                   download="${data.filename || 'answers.csv'}" 
+                                   class="btn btn-sm btn-primary ml-2">
+                                    <i class="fas fa-download"></i> Download CSV
+                                </a>
+                                <small class="text-muted d-block mt-1">Contains all ${data.questions.length} questions with answers, sources, and confidence scores.</small>
+                            </div>`;
+                            addMessage(downloadLink, 'ai');
+                        }
+                    }
+                    
+                    // Hide the panel
+                    batchQnAPanel.classList.add('hidden');
+                    
+                    // Clear the file input
+                    batchQnAInput.value = '';
+                    batchQnAFileName.textContent = '';
+                    batchQnAUploadBtn.disabled = true;
+                }
+            })
+            .catch(error => {
+                if (loadingSpinner) loadingSpinner.style.display = 'none';
+                alert('Error uploading file: ' + error);
+            });
         });
     }
 }
@@ -1158,16 +1395,33 @@ function askQuestion() {
         // Remove thinking message
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
+        
         if (data.error) {
             addMessage('❌ Error: ' + data.error, 'ai');
         } else {
-            let aiResponse = '🤖 AI: ' + data.answer;
+            // Create the AI response container
+            let aiResponse = '🤖 <strong>AI:</strong> ';
+            
+            // Always show the helpful answer first
+            aiResponse += '<span class="helpful-answer">' + data.answer + '</span>';
+            
+            // Always show the detailed answer toggle
+            aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
+            
+            // Add confidence if available
             if (data.confidence) {
-                aiResponse += '<br><span class="confidence-badge">Confidence: ' + data.confidence + '%</span>';
+                aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
             }
+            
+            // Add sources if available
             if (data.sources) {
-                aiResponse += '<br><span class="source-info">Sources: ' + data.sources + '</span>';
+                if (typeof data.sources === 'object' && data.sources.summary && data.sources.detailed) {
+                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span>';
+                } else {
+                    aiResponse += '<br><strong>Sources:</strong> ' + data.sources;
+                }
             }
+            
             addMessage(aiResponse, 'ai');
         }
     })
@@ -1316,14 +1570,26 @@ function addMessage(text, type) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function addLogMessage(text) {
+function addLogMessage(text, id = null) {
     const logsArea = document.getElementById('logsArea');
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message ai-message';
+    if (id) {
+        messageDiv.id = id;
+    }
     const timestamp = new Date().toLocaleTimeString();
     messageDiv.innerHTML = `<strong>📋</strong> [${timestamp}] ${text}`;
     logsArea.appendChild(messageDiv);
     logsArea.scrollTop = logsArea.scrollHeight;
+    return messageDiv;
+}
+
+function updateLogMessage(id, text) {
+    const messageDiv = document.getElementById(id);
+    if (messageDiv) {
+        const timestamp = new Date().toLocaleTimeString();
+        messageDiv.innerHTML = `<strong>📋</strong> [${timestamp}] ${text}`;
+    }
 }
 
 function showLoading(text) {
@@ -1393,7 +1659,16 @@ document.getElementById('loginSubmitBtn').addEventListener('click', function() {
                     // Display each message in order (oldest to newest)
                     (data.history || []).reverse().forEach(item => {
                         addMessage('🧑 You: ' + item.question, 'user');
-                        addMessage('🤖 AI: ' + item.answer, 'ai');
+                        
+                        // Format answer with confidence and sources if available
+                        let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
+                        if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
+                            answerText += `<br><br><strong>Confidence:</strong> ${item.confidence}%`;
+                        }
+                        if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
+                            answerText += `<br><br><strong>Sources:</strong> ${item.sources}`;
+                        }
+                        addMessage(answerText, 'ai');
                     });
                 });
         } else {
@@ -1820,51 +2095,58 @@ addDocBtn.addEventListener('click', () => addDocInput.click());
 addDocInput.addEventListener('change', (e) => {
     const files = e.target.files;
     if (files.length > 0) {
-        let uploadedCount = 0;
-        let errorCount = 0;
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (!file) {
-                errorCount++;
-                continue;
-            }
-            // Get current topic selection from Docs Management dropdown
-            let topicIds = [];
-            const topicDropdownMenu = document.getElementById('topicDropdownMenu');
-            if (topicDropdownMenu) {
-                topicIds = Array.from(topicDropdownMenu.querySelectorAll('.topic-checkbox:checked')).map(cb => cb.value);
-            }
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('topic_ids', JSON.stringify(topicIds));
-            fetch('/upload_document', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    uploadedCount++;
-                } else if (data.status === 'conflict') {
-                    showConflictModal(data.message, data.filename);
-                    return;
-                } else {
-                    errorCount++;
-                }
-                // Always refresh document list after each upload
-                loadDocuments();
-                if (uploadedCount + errorCount === files.length) {
-                    setTimeout(() => { loadDocuments(); }, 1000);
-                }
-            })
-            .catch(error => {
-                errorCount++;
-                loadDocuments();
-                if (uploadedCount + errorCount === files.length) {
-                    setTimeout(() => { loadDocuments(); }, 1000);
-                }
-            });
+        // Show progress indicator
+        const progressId = 'bulk-upload-progress';
+        addLogMessage(`📤 Starting bulk upload of ${files.length} document${files.length > 1 ? 's' : ''}...`, progressId);
+        
+        // Get current topic selection from Docs Management dropdown
+        let topicIds = [];
+        const topicDropdownMenu = document.getElementById('topicDropdownMenu');
+        if (topicDropdownMenu) {
+            topicIds = Array.from(topicDropdownMenu.querySelectorAll('.topic-checkbox:checked')).map(cb => cb.value);
         }
+        
+        // Use the new bulk upload endpoint
+        const formData = new FormData();
+        for (let i = 0; i < files.length; i++) {
+            formData.append('files', files[i]);
+        }
+        formData.append('topic_ids', JSON.stringify(topicIds));
+        
+        fetch('/bulk_upload_documents', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                updateLogMessage(progressId, `📤 Bulk upload completed: ${data.successful_count} successful, ${data.failed_count} failed, ${data.conflict_count} conflicts`);
+                
+                // Log individual results
+                data.results.forEach(result => {
+                    if (result.status === 'success') {
+                        addLogMessage(`✅ ${result.filename}: ${result.message}`);
+                    } else if (result.status === 'conflict') {
+                        addLogMessage(`⚠️ ${result.filename}: ${result.message}`);
+                        showConflictModal(result.message, result.filename);
+                    } else {
+                        addLogMessage(`❌ ${result.filename}: ${result.error}`);
+                    }
+                });
+                
+                // Refresh the document list immediately and then again after a delay
+                loadDocuments();
+                setTimeout(() => {
+                    loadDocuments();
+                }, 2000);
+            } else {
+                updateLogMessage(progressId, `❌ Bulk upload failed: ${data.error}`);
+            }
+        })
+        .catch(error => {
+            console.error('Bulk upload error:', error);
+            updateLogMessage(progressId, `❌ Network error during bulk upload: ${error}`);
+        });
     }
 });
 
@@ -2430,65 +2712,48 @@ loadTopics();
  // Confirm bulk delete functionality
  document.getElementById('confirmBulkDeleteBtn').addEventListener('click', function() {
      const selectedDocs = getSelectedDocuments();
-     // Comment out delete animation usage
-     // const stopAnimation = showDeleteAnimation();
      
      // Close modal
      bootstrap.Modal.getInstance(document.getElementById('bulkDeleteModal')).hide();
      
-     addLogMessage(`🗑️ Starting deletion of ${selectedDocs.length} document${selectedDocs.length > 1 ? 's' : ''}...`);
+     // Show progress indicator
+     const progressId = 'bulk-delete-progress';
+     addLogMessage(`🗑️ Starting bulk deletion of ${selectedDocs.length} document${selectedDocs.length > 1 ? 's' : ''}...`, progressId);
      
-     // Delete documents one by one
-     let deletedCount = 0;
-     let errorCount = 0;
-     
-     selectedDocs.forEach((docName, index) => {
-         fetch('/delete_document', {
-             method: 'POST',
-             headers: {
-                 'Content-Type': 'application/json',
-             },
-             body: JSON.stringify({filename: docName})
-         })
-         .then(response => response.json())
-         .then(data => {
-             if (data.status === 'success') {
-                 deletedCount++;
-                 addLogMessage(`🗑️ Successfully deleted: ${docName}`);
-             } else {
-                 errorCount++;
-                 console.error(`Error deleting ${docName}: ${data.error}`);
-                 addLogMessage(`❌ Error deleting ${docName}: ${data.error}`);
-             }
+     // Use the new bulk delete endpoint
+     fetch('/bulk_delete_documents', {
+         method: 'POST',
+         headers: {
+             'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({filenames: selectedDocs})
+     })
+     .then(response => response.json())
+     .then(data => {
+         if (data.status === 'success') {
+             updateLogMessage(progressId, `🗑️ Bulk delete completed: ${data.successful_count} successful, ${data.failed_count} failed`);
              
-             // Check if all deletes are complete
-             if (deletedCount + errorCount === selectedDocs.length) {
-                 if (errorCount === 0) {
-                     addLogMessage(`🗑️ Successfully deleted ${deletedCount} document${deletedCount > 1 ? 's' : ''}`);
+             // Log individual results
+             data.results.forEach(result => {
+                 if (result.status === 'success') {
+                     addLogMessage(`✅ ${result.filename}: ${result.message}`);
                  } else {
-                     addLogMessage(`⚠️ Deleted ${deletedCount} document${deletedCount > 1 ? 's' : ''}, ${errorCount} failed`);
+                     addLogMessage(`❌ ${result.filename}: ${result.error}`);
                  }
-                 
-                 // Refresh the document list
-                 setTimeout(() => {
-                     loadDocuments();
-                     pendingAnimationStop = stopAnimation;
-                 }, 1000);
-             }
-         })
-         .catch(error => {
-             errorCount++;
-             console.error(`Error deleting ${docName}:`, error);
-             addLogMessage(`❌ Network error deleting ${docName}: ${error}`);
+             });
              
-             if (deletedCount + errorCount === selectedDocs.length) {
-                 addLogMessage(`⚠️ Deleted ${deletedCount} document${deletedCount > 1 ? 's' : ''}, ${errorCount} failed`);
-                 setTimeout(() => {
-                     loadDocuments();
-                     pendingAnimationStop = stopAnimation;
-                 }, 1000);
-             }
-         });
+             // Refresh the document list immediately and then again after a delay
+             loadDocuments();
+             setTimeout(() => {
+                 loadDocuments();
+             }, 2000);
+         } else {
+             updateLogMessage(progressId, `❌ Bulk delete failed: ${data.error}`);
+         }
+     })
+     .catch(error => {
+         console.error('Bulk delete error:', error);
+         updateLogMessage(progressId, `❌ Network error during bulk delete: ${error}`);
      });
  });
  
@@ -2652,9 +2917,9 @@ function showSortOrderPopup(arrow, col, idx) {
 // --- Patch chat send logic ---
 function getSelectedChatTopicIds() {
     const menu = document.getElementById('chatTopicsDropdownMenu');
-    if (!menu) return ['all'];
+    if (!menu) return ['none'];
     const checked = menu.querySelectorAll('.form-check-input:checked');
-    if (checked.length === 0 || checked[0].value === 'all') return ['all'];
+    if (checked.length === 0) return ['none'];
     return Array.from(checked).map(cb => cb.value);
 }
 function getCurrentChatSessionKey() {
@@ -2678,6 +2943,11 @@ if (askButton && questionInput) {
 }
 function sendChatQuestion() {
     const input = document.getElementById('questionInput');
+    const askButton = document.getElementById('askButton');
+    // Prevent sending if input or button is disabled or readOnly
+    if (!input || !askButton || input.disabled || input.readOnly || askButton.disabled) {
+        return;
+    }
     const question = input.value.trim();
     if (!question) return;
     const topic_ids = getSelectedChatTopicIds();
@@ -2702,13 +2972,29 @@ function sendChatQuestion() {
         if (data.error) {
             addMessage('❌ Error: ' + data.error, 'ai');
         } else {
-            let aiResponse = '🤖 AI: ' + data.answer;
+            // Create the AI response container
+            let aiResponse = '🤖 <strong>AI:</strong> ';
+            
+            // Always show the helpful answer first
+            aiResponse += '<span class="helpful-answer">' + data.answer + '</span>';
+            
+            // Always show the detailed answer toggle
+            aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
+            
+            // Add confidence if available
             if (data.confidence) {
-                aiResponse += '<br><span class="confidence-badge">Confidence: ' + data.confidence + '%</span>';
+                aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
             }
+            
+            // Add sources if available
             if (data.sources) {
-                aiResponse += '<br><span class="source-info">Sources: ' + data.sources + '</span>';
+                if (typeof data.sources === 'object' && data.sources.summary && data.sources.detailed) {
+                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span>';
+                } else {
+                    aiResponse += '<br><strong>Sources:</strong> ' + data.sources;
+                }
             }
+            
             addMessage(aiResponse, 'ai');
             // Update chatHistories cache for this session
             if (!window.chatHistories) window.chatHistories = {};
@@ -2753,6 +3039,316 @@ window.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Add a button to refresh backend logs in the Logs tab
+// Place this inside the logsArea div, e.g.:
+// <button class="btn btn-outline-secondary mb-2" id="refreshBackendLogsBtn">Refresh Backend Logs</button>
+// ... existing code ...
+// Add this JS near the other event listeners:
+let backendLogsInterval = null;
+
+function fetchBackendLogs() {
+    fetch('/get_backend_logs')
+        .then(response => response.json())
+        .then(data => {
+            const logsContent = document.getElementById('logsContent');
+            if (!logsContent) return;
+            
+            // Clear only the log messages, not the welcome message
+            const messages = logsContent.querySelectorAll('.message');
+            messages.forEach((message, index) => {
+                if (index > 0) { // Keep the first message (welcome message)
+                    message.remove();
+                }
+            });
+            
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(line => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message ai-message';
+                    messageDiv.textContent = line.trim();
+                    logsContent.appendChild(messageDiv);
+                });
+                // Removed auto-scroll to allow manual scrolling
+            } else if (data.error) {
+                addLogMessage('❌ Error fetching backend logs: ' + data.error);
+            } else {
+                // No logs yet
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message ai-message';
+                messageDiv.textContent = '📝 This is where system logs will show up.';
+                logsContent.appendChild(messageDiv);
+            }
+        });
+}
+
+// Start/stop polling when Logs tab is shown/hidden
+const logsTabBtn = document.getElementById('logsTabBtn');
+if (logsTabBtn) {
+    logsTabBtn.addEventListener('click', function() {
+        fetchBackendLogs();
+        if (backendLogsInterval) clearInterval(backendLogsInterval);
+        backendLogsInterval = setInterval(fetchBackendLogs, 2000); // Poll every 2 seconds
+    });
+}
+
+// Stop polling when switching away from Logs tab
+const chatTabBtn = document.getElementById('chatTabBtn');
+const docsTabBtn = document.getElementById('docsTabBtn');
+function stopBackendLogsInterval() {
+    if (backendLogsInterval) {
+        clearInterval(backendLogsInterval);
+        backendLogsInterval = null;
+    }
+}
+if (chatTabBtn) chatTabBtn.addEventListener('click', stopBackendLogsInterval);
+if (docsTabBtn) docsTabBtn.addEventListener('click', stopBackendLogsInterval);
+
+// Clear backend logs when page is unloaded (session ends)
+window.addEventListener('beforeunload', function() {
+    fetch('/clear_backend_logs', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    }).catch(error => {
+        // Ignore errors when page is unloading
+        console.log('Could not clear logs:', error);
+    });
+});
+
+// Clear displayed logs button functionality
+const clearLogsBtn = document.getElementById('clearLogsBtn');
+if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', function() {
+        // Clear the backend log file first
+        fetch('/clear_backend_logs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        }).then(() => {
+            // Then clear the displayed logs
+            const logsContent = document.getElementById('logsContent');
+            if (logsContent) {
+                            // Clear all messages except the welcome message
+            const messages = logsContent.querySelectorAll('.message');
+            messages.forEach((message, index) => {
+                // Keep only the first message (welcome message), remove all others
+                if (index > 0) {
+                    message.remove();
+                }
+            });
+            }
+        }).catch(error => {
+            console.log('Could not clear backend logs:', error);
+        });
+    });
+}
+// ... existing code ...
+
+// Old function removed - using updateChatBarAndBatchQnAState instead
+
+// ... existing code ...
+// Chat topics dropdown logic is now handled in attachChatTopicsDropdownHandler()
+// ... existing code ...
+// On page load, ensure the correct state:
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, checking elements...');
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    console.log('Menu found on load:', menu);
+    setTimeout(updateUploadQuestionnaireButton, 200); // Delay to ensure DOM is ready
+});
+// ... existing code ...
+
+// --- BEGIN: Separate logic for Upload Questionnaire button ---
+function updateUploadQuestionnaireButton() {
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    const batchQnAButton = document.getElementById('batchQnAButton');
+    console.log('Menu element:', menu);
+    console.log('Button element:', batchQnAButton);
+    if (!menu || !batchQnAButton) {
+        console.log('Menu or button not found!');
+        return;
+    }
+    
+    const checked = menu.querySelectorAll('.form-check-input:checked');
+    console.log('updateUploadQuestionnaireButton called, checked topics:', checked.length);
+    console.log('Checked elements:', checked);
+    
+    // No topics selected
+    if (checked.length === 0 || (checked.length === 1 && checked[0].value === 'none')) {
+        batchQnAButton.disabled = true;
+        batchQnAButton.classList.add('disabled-btn');
+        batchQnAButton.setAttribute('title', 'Select topics with documents to enable Upload Questionnaire');
+        batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Topics)';
+        return;
+    }
+    
+    // Get selected topic IDs
+    const selectedTopicIds = Array.from(checked)
+        .filter(cb => cb.value !== 'none' && cb.value !== 'all')
+        .map(cb => parseInt(cb.value)).filter(id => !isNaN(id));
+    
+    // Check if 'All Topics' is selected
+    const isAllTopics = Array.from(checked).some(cb => cb.value === 'all');
+    
+    // Show loading state while checking
+    batchQnAButton.disabled = true;
+    batchQnAButton.classList.add('disabled-btn');
+    batchQnAButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking Documents...';
+    
+    // For 'All Topics', check if any documents exist
+    if (isAllTopics) {
+        console.log('Checking All Topics for documents');
+        fetch('/has_documents_for_topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic_ids: [] })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('API response for All Topics:', data);
+            if (data.has_documents) {
+                batchQnAButton.disabled = false;
+                batchQnAButton.classList.remove('disabled-btn');
+                batchQnAButton.setAttribute('title', '');
+                batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire';
+            } else {
+                batchQnAButton.disabled = true;
+                batchQnAButton.classList.add('disabled-btn');
+                batchQnAButton.setAttribute('title', 'No documents found for selected topics');
+                batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Docs)';
+            }
+        })
+        .catch(() => {
+            batchQnAButton.disabled = true;
+            batchQnAButton.classList.add('disabled-btn');
+            batchQnAButton.setAttribute('title', 'Error checking documents');
+            batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (Error)';
+        });
+    } else {
+        // For specific topics, check if documents exist for those topics
+        console.log('Checking specific topics for documents:', selectedTopicIds);
+        fetch('/has_documents_for_topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic_ids: selectedTopicIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('API response for specific topics:', data);
+            if (data.has_documents) {
+                batchQnAButton.disabled = false;
+                batchQnAButton.classList.remove('disabled-btn');
+                batchQnAButton.setAttribute('title', '');
+                batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire';
+            } else {
+                batchQnAButton.disabled = true;
+                batchQnAButton.classList.add('disabled-btn');
+                batchQnAButton.setAttribute('title', 'No documents found for selected topics');
+                batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Docs)';
+            }
+        })
+        .catch(() => {
+            batchQnAButton.disabled = true;
+            batchQnAButton.classList.add('disabled-btn');
+            batchQnAButton.setAttribute('title', 'Error checking documents');
+            batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (Error)';
+        });
+    }
+}
+// --- END: Separate logic for Upload Questionnaire button ---
+
+// Duplicate event listeners removed - using the ones above
+// ... existing code ...
+
+// Add source dropdown toggle functionality
+function toggleSourceDetails(toggleElement) {
+    const sourceInfo = toggleElement.closest('.source-info');
+    const summary = sourceInfo.querySelector('.source-summary');
+    const detailed = sourceInfo.querySelector('.source-detailed');
+    
+    if (detailed) {
+        // Toggle existing detailed view
+        detailed.remove();
+        toggleElement.textContent = '▼';
+    } else {
+        // Show detailed view
+        const detailedDiv = document.createElement('div');
+        detailedDiv.className = 'source-detailed';
+        detailedDiv.style.marginTop = '5px';
+        detailedDiv.style.padding = '8px';
+        detailedDiv.style.backgroundColor = '#f8f9fa';
+        detailedDiv.style.border = '1px solid #dee2e6';
+        detailedDiv.style.borderRadius = '4px';
+        detailedDiv.style.fontSize = '0.9em';
+        detailedDiv.style.color = '#6c757d';
+        detailedDiv.style.maxWidth = '100%';
+        detailedDiv.style.maxHeight = '200px';
+        detailedDiv.style.overflow = 'auto';
+        detailedDiv.style.whiteSpace = 'pre-wrap';
+        detailedDiv.style.wordBreak = 'break-word';
+        detailedDiv.textContent = toggleElement.getAttribute('data-detailed');
+        
+        summary.parentNode.insertBefore(detailedDiv, toggleElement);
+        toggleElement.textContent = '▲';
+    }
+}
+
+// Add detailed answer toggle functionality
+function toggleDetailedAnswer(toggleElement) {
+    // Get the message container
+    const messageDiv = toggleElement.closest('.message');
+    
+    // Check if detailed answer already exists
+    const existingDetailed = messageDiv.querySelector('.detailed-answer');
+    
+    if (existingDetailed) {
+        // Hide detailed answer
+        existingDetailed.remove();
+        toggleElement.textContent = 'Detailed Answer ▼';
+    } else {
+        // Get the detailed content from the toggle element
+        const detailedContent = toggleElement.getAttribute('data-detailed');
+        
+        // Only show detailed answer if there's content
+        if (detailedContent && detailedContent.trim() !== '') {
+            // Show detailed answer
+            const detailedDiv = document.createElement('div');
+            detailedDiv.className = 'detailed-answer';
+            detailedDiv.style.cssText = `
+                margin-top: 10px;
+                padding: 12px;
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                font-size: 1em;
+                color: #495057;
+                max-width: 100%;
+                white-space: pre-wrap;
+                word-break: break-word;
+                line-height: 1.5;
+            `;
+            
+            detailedDiv.innerHTML = detailedContent;
+            
+            // Insert the detailed answer right after the helpful answer
+            const helpfulAnswer = messageDiv.querySelector('.helpful-answer');
+            if (helpfulAnswer) {
+                helpfulAnswer.parentNode.insertBefore(detailedDiv, toggleElement);
+            } else {
+                // Fallback: insert before the toggle element
+                toggleElement.parentNode.insertBefore(detailedDiv, toggleElement);
+            }
+            
+            // Change toggle text
+            toggleElement.textContent = 'Detailed Answer ▲';
+        } else {
+            // No detailed content available
+            alert('No detailed answer available for this response.');
+        }
+    }
+}
     </script>
 </body>
 </html> 
