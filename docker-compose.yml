@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  faq-bot:
+    build:
+      context: .
+      dockerfile: Docker_Container_Files/Dockerfile
+    container_name: faq-bot
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+      - "11434:11434"  # Ollama API port
+    volumes:
+      # Mount host directories for persistent data
+      - ./your_docs:/app/your_docs
+      - ./your_db:/app/your_db
+      - ./uploads:/app/uploads
+      - postgres_data:/var/lib/postgresql/data
+      - ollama_data:/root/.ollama
+    environment:
+      - FLASK_ENV=production
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - faq-bot-network
+
+volumes:
+  postgres_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  faq-bot-network:
+    driver: bridge 

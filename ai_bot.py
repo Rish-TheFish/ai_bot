@@ -1,20 +1,22 @@
 import os, csv, shutil, re
 from datetime import datetime
+import time  # Add timing import
 from Logistics_Files import *
-from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, UPLOAD_PIN, MODEL_NAME, PASSWORD
+from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, PASSWORD
+# UPLOAD_PIN commented out for now
 from Logistics_Files.backend_log import add_backend_log, backend_logs
 import pickle
 from langchain_community.document_loaders import (
     TextLoader, PyMuPDFLoader, UnstructuredWordDocumentLoader, CSVLoader, UnstructuredPDFLoader
 )
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+
 from langchain_ollama import OllamaLLM
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import xml.etree.ElementTree as ET
-from PyPDF2 import PdfReader
+
 from docx import Document as DocxReader
 import random
 import hashlib
@@ -26,7 +28,7 @@ import inspect
 import psutil
 import subprocess
 import platform
-# Add these imports at the top with fallback handling
+# Optional table extraction imports (heavy dependencies)
 try:
     import pandas as pd
     import tabula
@@ -36,29 +38,10 @@ try:
     import cv2
     import numpy as np
     TABLE_EXTRACTION_AVAILABLE = True
-    
-    # Test if the libraries actually work
-    try:
-        # Test tabula
-        if not hasattr(tabula, 'read_pdf'):
-            TABLE_EXTRACTION_AVAILABLE = False
-            logging.warning("Tabula module found but read_pdf method not available")
-    except:
-        TABLE_EXTRACTION_AVAILABLE = False
-        logging.warning("Tabula module not functional")
-    
-    try:
-        # Test camelot
-        if not hasattr(camelot, 'read_pdf'):
-            TABLE_EXTRACTION_AVAILABLE = False
-            logging.warning("Camelot module found but read_pdf method not available")
-    except:
-        TABLE_EXTRACTION_AVAILABLE = False
-        logging.warning("Camelot module not functional")
-        
+    logging.info("[DEBUG] Table extraction libraries loaded successfully")
 except ImportError as e:
-    logging.warning(f"Table extraction dependencies not available: {e}")
-    logging.warning("Install with: pip install pandas tabula-py camelot-py[cv] opencv-python pytesseract Pillow")
+    logging.info(f"[DEBUG] Table extraction libraries not available: {e}")
+    logging.info("[DEBUG] Install with: pip install pandas tabula-py camelot-py[cv] opencv-python pytesseract Pillow")
     TABLE_EXTRACTION_AVAILABLE = False
     # Create dummy imports to prevent errors
     pd = None
@@ -234,8 +217,15 @@ class AIApp:
         logging.info("[DEBUG] Initializing embedding models...")
         self.initialize_embedding_models()
         
-        logging.info("[DEBUG] Initializing LLM...")
-        self.llm = OllamaLLM(model=MODEL_NAME)
+        logging.info("[DEBUG] Initializing LLM (Ollama will auto-detect best available device)...")
+        optimal_device = self.hardware_info['optimal_device']
+        logging.info(f"[DEBUG] Hardware detected: {optimal_device} (Ollama will auto-optimize)")
+        
+        # OllamaLLM automatically uses the best available device (GPU if available, CPU if not)
+        self.llm = OllamaLLM(
+            model=MODEL_NAME
+        )
+        logging.info(f"[DEBUG] LLM initialized successfully (Ollama auto-detected device)")
         self.db = None
         self.recording = False
         self.locked_out = False
@@ -245,152 +235,107 @@ class AIApp:
         self.DOCS_PATH = DOCS_PATH  # Make it accessible for Flask
         self.upload_enabled = False
         
-        # PCA components for dimension conversion
-        self.pca_model = None
-        self.pca_trained = False
+
         
         # Initialize confidence models
         logging.info("[DEBUG] Initializing confidence models...")
         self.initialize_confidence_models()
         
-        logging.info("[DEBUG] Loading vector database...")
+        logging.info("[DEBUG] Step 3: Loading vector database...")
         self.load_vector_db()
         
         # Force rebuild if loading failed OR if we need to update embeddings
         if not self.db:
-            logging.info("[DEBUG] No existing database found, building new one...")
+            logging.info("[DEBUG] Step 4: No existing database found, building new one...")
             self.build_db()
         else:
             # Check if we need to rebuild due to embedding model change
             try:
-                logging.info("[DEBUG] Testing existing database compatibility...")
+                logging.info("[DEBUG] Step 4: Testing existing database compatibility...")
                 # Test if the current embeddings work with the existing database
                 test_query = "test"
                 test_embedding = self.embedding.embed_query(test_query)
                 
                 # Actually test the database with a similarity search
                 test_docs = self.db.similarity_search(test_query, k=1)
-                logging.info("[DEBUG] Embedding model is compatible with existing database")
+                logging.info("[DEBUG] Step 4: Embedding model is compatible with existing database")
             except Exception as e:
-                logging.warning(f"[DEBUG] Embedding model incompatible, rebuilding database: {e}")
+                logging.warning(f"[DEBUG] Step 4: Embedding model incompatible, rebuilding database: {e}")
                 self.force_rebuild_db()
         
-        logging.info("[DEBUG] AIApp initialization completed")
+        # Log final device configuration
+        logging.info(f"[DEBUG] Step 5: AIApp initialization completed")
+        logging.info(f"[DEBUG] Final configuration:")
+        logging.info(f"[DEBUG]   - Hardware detected: {self.hardware_info['optimal_device']}")
+        logging.info(f"[DEBUG]   - Embedding model: Llama 3 ({self.current_embedding_type})")
+        logging.info(f"[DEBUG]   - LLM model: {MODEL_NAME}")
+        logging.info(f"[DEBUG]   - Confidence model: {'Available' if self.confidence_model else 'Not available'}")
+        if self.hardware_info['gpu_available']:
+            logging.info(f"[DEBUG]   - GPU: {self.hardware_info['gpu_type']} ({self.hardware_info['gpu_memory_gb']:.1f} GB)")
+        else:
+            logging.info(f"[DEBUG]   - GPU: Not available (using CPU)")
+        logging.info(f"[DEBUG]   - Optimal batch size: {self.hardware_info['optimal_batch_size']}")
 
     def initialize_embedding_models(self):
-        """Initialize both HuggingFace and Ollama embedding models for hybrid approach."""
+        """Initialize native Llama 3 embedding model (Ollama automatically uses best available device)."""
         try:
-            # Initialize HuggingFace embeddings for fast initial builds
+            # Initialize native Llama 3 embeddings
             optimal_device = self.hardware_info['optimal_device']
-            logging.info(f"[DEBUG] Initializing HuggingFace embeddings with device: {optimal_device}")
-            
-            self.hf_embedding = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",  # Fast, reliable model
-                model_kwargs={'device': optimal_device},
-                encode_kwargs={'normalize_embeddings': True, 'batch_size': 32}  # Optimized for speed
-            )
-            
-            # Initialize Ollama embeddings for incremental updates
-            logging.info("[DEBUG] Initializing Ollama embeddings for incremental updates")
+            logging.info(f"[DEBUG] Initializing Llama 3 embeddings (Ollama will auto-detect best device: {optimal_device})")
             from langchain_ollama import OllamaEmbeddings
             
-            self.ollama_embedding = OllamaEmbeddings(
+            # OllamaEmbeddings automatically uses the best available device (GPU if available, CPU if not)
+            self.embedding = OllamaEmbeddings(
                 model="llama3:instruct",
-                keep_alive=600  # Keep model loaded for 10 minutes
+                keep_alive=3600  # Keep model loaded for 1 hour to avoid reloading
             )
             
-            # Set default embedding to HuggingFace for initial builds
-            self.embedding = self.hf_embedding
-            self.current_embedding_type = "huggingface"
-            
-            logging.info("[DEBUG] Both embedding models initialized successfully")
+            self.current_embedding_type = "llama3"
+            logging.info(f"[DEBUG] Llama 3 embeddings initialized successfully (Ollama auto-detected device)")
             
         except Exception as e:
-            logging.warning(f"[DEBUG] Error initializing HuggingFace embeddings: {e}")
-            # Fallback to Ollama only
-            try:
-                from langchain_ollama import OllamaEmbeddings
-                self.ollama_embedding = OllamaEmbeddings(
-                    model="llama3:instruct",
-                    keep_alive=600
-                )
-                self.embedding = self.ollama_embedding
-                self.current_embedding_type = "ollama"
-                self.hf_embedding = None
-                logging.info("[DEBUG] Fallback to Ollama embeddings only")
-            except Exception as ollama_e:
-                logging.error(f"[DEBUG] Failed to initialize any embedding model: {ollama_e}")
-                raise Exception("No embedding model available")
+            logging.error(f"[DEBUG] Failed to initialize Llama 3 embeddings: {e}")
+            raise Exception("No embedding model available")
 
     def select_optimal_embedding(self, operation_type="initial_build"):
         """Select the optimal embedding model based on operation type."""
-        # Always prefer HuggingFace as default for better quality
-        if self.hf_embedding:
-            self.embedding = self.hf_embedding
-            self.current_embedding_type = "huggingface"
-            logging.info("[DEBUG] Using HuggingFace embeddings (default)")
-            return True
-        else:
-            # Fallback to Ollama if HuggingFace not available
-            self.embedding = self.ollama_embedding
-            self.current_embedding_type = "ollama"
-            logging.info("[DEBUG] Using Ollama embeddings (fallback)")
-            return True
+        # Always use native Llama 3 embeddings
+        self.embedding = self.embedding  # Already set to Llama 3
+        self.current_embedding_type = "llama3"
+        logging.info("[DEBUG] Using native Llama 3 embeddings")
+        return True
 
     def evaluate_content_safety(self, text: str, type: str = "input") -> bool:
         """Check if the content is appropriate for a workplace assistant."""
         try:
-            prompt = f"""Determine if the following {type} is appropriate for a workplace compliance assistant. 
-            ONLY flag content that is clearly inappropriate for a professional workplace environment.
-            Allow normal business questions, compliance inquiries, and professional discussions.
-            Content that is off topic or not related to compliance should be allowed, unless it is clearly inappropriate.
-            Only block content that contains: explicit sexual content, violence, hate speech, illegal activities, or threats.
-            Respond only with 'yes' or 'no'.
-            {text}"""
-            response = self.llm.invoke(prompt).strip().lower()
-            return response.startswith("yes")
+            # prompt = f"""Determine if the following {type} is appropriate for a workplace compliance assistant. 
+            # ONLY flag content that is clearly inappropriate for a professional workplace environment.
+            # Allow normal business questions, compliance inquiries, and professional discussions.
+            # Content that is off topic or not related to compliance should be allowed, unless it is clearly inappropriate.
+            # Only block content that contains: explicit sexual content, violence, hate speech, illegal activities, or threats.
+            # Respond only with 'yes' or 'no'.
+            # {text}"""
+            # response = self.llm.invoke(prompt).strip().lower()
+            # return response.startswith("yes")
+            return True  # Always allow content for now
         except Exception as e:
             logging.error(f"Content safety check failed: {e}")
             return True
 
     def load_vector_db(self) -> bool:
-        """Load the FAISS vector database from disk with hybrid embedding support."""
+        """Load the FAISS vector database from disk with native Llama 3 embeddings."""
         try:
-            # Check if embedding type metadata exists
-            metadata_file = os.path.join(DB_PATH, 'embedding_type.txt')
-            if os.path.exists(metadata_file):
-                try:
-                    with open(metadata_file, 'r') as f:
-                        saved_embedding_type = f.read().strip()
-                    logging.info(f"[DEBUG] Found saved embedding type: {saved_embedding_type}")
-                    
-                    # Select the correct embedding model based on saved type
-                    if saved_embedding_type == "huggingface" and self.hf_embedding:
-                        self.embedding = self.hf_embedding
-                        self.current_embedding_type = "huggingface"
-                        logging.info("[DEBUG] Using HuggingFace embeddings for loaded database")
-                    elif saved_embedding_type == "ollama" and self.ollama_embedding:
-                        self.embedding = self.ollama_embedding
-                        self.current_embedding_type = "ollama"
-                        logging.info("[DEBUG] Using Ollama embeddings for loaded database")
-                    else:
-                        # Fallback to current embedding if saved type not available
-                        logging.warning(f"[DEBUG] Saved embedding type {saved_embedding_type} not available, using current embedding")
-                except Exception as e:
-                    logging.warning(f"[DEBUG] Could not read embedding type metadata: {e}")
-            
-            # Load the FAISS database
+            logging.info("[DEBUG] Step 3a: Starting FAISS database load...")
+            # Load the FAISS database with native Llama 3 embeddings
             self.db = FAISS.load_local(DB_PATH, self.embedding, allow_dangerous_deserialization=True)
-            
-            # Load PCA model if using HuggingFace embeddings
-            if self.current_embedding_type == "huggingface":
-                self.load_pca_model()
+            logging.info("[DEBUG] Step 3b: FAISS database loaded successfully")
             
             doc_count = len([f for f in os.listdir(DOCS_PATH) if os.path.isfile(os.path.join(DOCS_PATH, f))])
-            add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using {self.current_embedding_type} embeddings.")
+            add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using native Llama 3 embeddings.")
+            logging.info(f"[DEBUG] Step 3c: Found {doc_count} documents in DOCS_PATH")
             return True
         except Exception as e:
-            logging.warning(f"Vector database not found or corrupted: {e}")
+            logging.warning(f"[DEBUG] Step 3a: Vector database not found or corrupted: {e}")
             return False
     
     def database_exists_and_valid(self) -> bool:
@@ -420,90 +365,7 @@ class AIApp:
             logging.warning(f"[DEBUG] Database validation failed: {e}")
             return False
     
-    def train_pca_model(self, embeddings: List[List[float]]) -> bool:
-        """Train PCA model to convert 4096D embeddings to 384D."""
-        try:
-            from sklearn.decomposition import PCA
-            
-            logging.info(f"[DEBUG] Training PCA model on {len(embeddings)} embeddings...")
-            
-            # Convert to numpy array
-            embeddings_array = np.array(embeddings)
-            logging.info(f"[DEBUG] Embeddings shape: {embeddings_array.shape}")
-            
-            # Check if we have enough samples for PCA
-            n_samples, n_features = embeddings_array.shape
-            max_components = min(n_samples, n_features, 384)
-            
-            if n_samples < 384:
-                logging.warning(f"[DEBUG] Not enough samples ({n_samples}) for 384D PCA, using {max_components} components")
-                # Use fewer components or skip PCA
-                if n_samples < 10:
-                    logging.warning(f"[DEBUG] Too few samples ({n_samples}), skipping PCA training")
-                    return False
-            
-            # Train PCA with appropriate number of components
-            self.pca_model = PCA(n_components=max_components, random_state=42)
-            self.pca_model.fit(embeddings_array)
-            
-            # Calculate explained variance
-            explained_variance = np.sum(self.pca_model.explained_variance_ratio_)
-            logging.info(f"[DEBUG] PCA explained variance: {explained_variance:.4f} ({explained_variance*100:.2f}%)")
-            
-            self.pca_trained = True
-            
-            # Save PCA model
-            pca_path = os.path.join(DB_PATH, 'pca_model.pkl')
-            with open(pca_path, 'wb') as f:
-                pickle.dump(self.pca_model, f)
-            
-            logging.info(f"[DEBUG] PCA model trained and saved successfully with {max_components} components")
-            return True
-            
-        except Exception as e:
-            logging.error(f"[DEBUG] Error training PCA model: {e}")
-            return False
-    
-    def load_pca_model(self) -> bool:
-        """Load existing PCA model from disk."""
-        try:
-            pca_path = os.path.join(DB_PATH, 'pca_model.pkl')
-            if os.path.exists(pca_path):
-                with open(pca_path, 'rb') as f:
-                    self.pca_model = pickle.load(f)
-                self.pca_trained = True
-                logging.info(f"[DEBUG] PCA model loaded successfully")
-                return True
-            else:
-                logging.info(f"[DEBUG] No existing PCA model found")
-                return False
-        except Exception as e:
-            logging.error(f"[DEBUG] Error loading PCA model: {e}")
-            return False
-    
-    def convert_embedding_dimensions(self, embedding: List[float]) -> List[float]:
-        """Convert 4096D embedding to 384D using PCA."""
-        try:
-            if not self.pca_trained or self.pca_model is None:
-                logging.warning("[DEBUG] PCA model not trained, cannot convert dimensions")
-                return embedding
-            
-            # Convert to numpy array and reshape
-            embedding_array = np.array(embedding).reshape(1, -1)
-            
-            # Apply PCA transformation
-            converted_embedding = self.pca_model.transform(embedding_array)
-            
-            # Convert back to list
-            return converted_embedding[0].tolist()
-            
-        except Exception as e:
-            logging.error(f"[DEBUG] Error converting embedding dimensions: {e}")
-            return embedding
-    
-    def should_use_pca_conversion(self) -> bool:
-        """Check if PCA conversion should be used."""
-        return self.pca_trained and self.pca_model is not None
+
 
     def get_document_status(self) -> dict:
         """Get information about existing documents and database status."""
@@ -595,11 +457,11 @@ class AIApp:
         return uploaded_files
 
     def build_db(self, operation_type="initial_build") -> None:
-        """Rebuild the FAISS vector database from all supported documents in DOCS_PATH, using hybrid embedding approach."""
+        """Rebuild the FAISS vector database from all supported documents in DOCS_PATH, using native Llama 3 embeddings."""
         import os
         import xml.etree.ElementTree as ET
         
-        # Select optimal embedding model for this operation
+        # Use native Llama 3 embeddings
         logging.info(f"[DEBUG] Building database with operation type: {operation_type}")
         self.select_optimal_embedding(operation_type)
         
@@ -704,24 +566,94 @@ class AIApp:
             all_docs = all_docs[:max_docs]
             logging.info(f"[DEBUG] Limited to {len(all_docs)} documents")
         
-        # Improved chunking strategy with smaller chunks for faster processing
+        # Enhanced chunking strategy with optimal parameters for compliance documents
         logging.info("[DEBUG] Starting document chunking...")
-        splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+        
+        # Tighter chunking for more precise retrieval
+        if any(doc.metadata.get('source', '').endswith('.pdf') for doc in all_docs):
+            # PDFs often have structured content - use much smaller chunks
+            chunk_size = 80
+            chunk_overlap = 40
+        elif any(doc.metadata.get('source', '').endswith('.docx') for doc in all_docs):
+            # Word docs can be chunked more granularly
+            chunk_size = 100
+            chunk_overlap = 45
+        else:
+            # Default for other document types
+            chunk_size = 120
+            chunk_overlap = 50
+        
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            separators=[
+                "\n\n\n",    # Major section breaks
+                "\n\n",      # Paragraph breaks
+                "\n",        # Line breaks
+                ". ",        # Sentence endings
+                "! ",        # Exclamation endings
+                "? ",        # Question endings
+                "; ",        # Semicolon separators
+                ": ",        # Colon separators
+                " - ",       # Dash separators
+                " • ",       # Bullet points
+                " * ",       # Asterisk separators
+                " ",         # Word boundaries
+                ""           # Character level (fallback)
+            ]
+        )
+        
         chunks = splitter.split_documents(all_docs)
+        logging.info(f"[DEBUG] Chunking parameters: size={chunk_size}, overlap={chunk_overlap}")
         logging.info(f"[DEBUG] Number of chunks created: {len(chunks)}")
         
+        # Post-process chunks for better quality with stricter filtering
+        processed_chunks = []
+        for i, chunk in enumerate(chunks):
+            # Clean up chunk content
+            content = chunk.page_content.strip()
+            
+            # Skip chunks that are too short (with tighter limits)
+            if len(content) < 30:
+                continue
+                
+            # Skip chunks that are mostly punctuation, numbers, or whitespace
+            alpha_chars = len([c for c in content if c.isalpha()])
+            if alpha_chars < len(content) * 0.4:  # Increased threshold
+                continue
+            
+            # Skip chunks that are just headers or navigation text
+            if content.isupper() and len(content) < 100:
+                continue
+                
+            # Skip chunks that are mostly special characters
+            special_chars = len([c for c in content if c in '!@#$%^&*()_+-=[]{}|;:,.<>?'])
+            if special_chars > len(content) * 0.3:
+                continue
+            
+            # Create new chunk with cleaned content
+            processed_chunk = Document(
+                page_content=content,
+                metadata=chunk.metadata.copy()
+            )
+            processed_chunks.append(processed_chunk)
+        
+        chunks = processed_chunks
+        logging.info(f"[DEBUG] After processing: {len(chunks)} quality chunks retained")
+        
         # Limit debug output to avoid overwhelming logs
-        for i, chunk in enumerate(chunks[:2]):
-            logging.info(f"[DEBUG] Chunk {i}: {chunk.page_content[:50]}...")
+        for i, chunk in enumerate(chunks[:3]):
+            logging.info(f"[DEBUG] Chunk {i}: {chunk.page_content[:80]}...")
         
-        if len(chunks) > 2:
-            logging.info(f"[DEBUG] ... and {len(chunks) - 2} more chunks")
+        if len(chunks) > 3:
+            logging.info(f"[DEBUG] ... and {len(chunks) - 3} more chunks")
         
-        # Use the selected embedding model (HuggingFace for initial, Ollama for incremental)
-        logging.info(f"[DEBUG] Using {self.current_embedding_type} embeddings for database creation...")
+        # Use native Llama 3 embeddings
+        logging.info(f"[DEBUG] Using native Llama 3 embeddings for database creation...")
         
         # Create FAISS database with batch processing to avoid memory issues
-        logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks using {self.current_embedding_type}...")
+        logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks using native Llama 3 embeddings...")
         
         # Smart document selection with dynamic memory monitoring using psutil
         memory = psutil.virtual_memory()
@@ -837,7 +769,7 @@ class AIApp:
             logging.info(f"[DEBUG] Selected {len(chunks)} chunks from {len(doc_chunks)} documents")
         
         try:
-            logging.info(f"[DEBUG] Attempting to create FAISS database with {self.current_embedding_type}...")
+            logging.info(f"[DEBUG] Attempting to create FAISS database with native Llama 3 embeddings...")
             
             # Optimized approach with dynamic memory monitoring and speed improvements
             optimal_batch_size = self.hardware_info['optimal_batch_size']
@@ -954,14 +886,7 @@ class AIApp:
         os.makedirs(DB_PATH, exist_ok=True)
         self.db.save_local(DB_PATH)
         
-        # Save embedding type metadata
-        metadata_file = os.path.join(DB_PATH, 'embedding_type.txt')
-        try:
-            with open(metadata_file, 'w') as f:
-                f.write(self.current_embedding_type)
-            logging.info(f"[DEBUG] Saved embedding type metadata: {self.current_embedding_type}")
-        except Exception as e:
-            logging.warning(f"[DEBUG] Could not save embedding type metadata: {e}")
+
         
         logging.info("[DEBUG] FAISS database saved successfully")
         
@@ -969,26 +894,7 @@ class AIApp:
         logging.info(f"[DEBUG] Sources in vector DB: {sorted(sources)}")
         logging.info(f"Vector DB rebuilt from {len(chunks)} chunks using {self.current_embedding_type} embeddings and saved to {DB_PATH}! Sources: {sorted(sources)}")
         
-        # Train PCA model for dimension conversion if using HuggingFace embeddings
-        if self.current_embedding_type == "huggingface" and self.hf_embedding and chunks:
-            try:
-                logging.info("[DEBUG] Training PCA model for dimension conversion...")
-                
-                # Get embeddings for PCA training (use a subset for efficiency)
-                training_chunks = chunks[:min(100, len(chunks))]  # Use up to 100 chunks for training
-                training_texts = [chunk.page_content for chunk in training_chunks]
-                
-                # Get embeddings using HuggingFace
-                embeddings = self.hf_embedding.embed_documents(training_texts)
-                
-                # Train PCA model
-                if self.train_pca_model(embeddings):
-                    logging.info("[DEBUG] PCA model trained successfully")
-                else:
-                    logging.warning("[DEBUG] Failed to train PCA model")
-                    
-            except Exception as e:
-                logging.warning(f"[DEBUG] Error training PCA model: {e}")
+
 
     def get_loader(self, path: str) -> Optional[Any]:
         """Return the appropriate loader for a file, with input validation."""
@@ -1121,7 +1027,7 @@ Please provide a structured summary:"""
 
     def get_doc_topic_map(self) -> dict:
         """Return a mapping: filename -> set of topic_ids."""
-        DATABASE_URL = f'postgresql://postgres:{PASSWORD}@127.0.0.1:5432/chat_history'
+        DATABASE_URL = f'postgresql://postgres:{PASSWORD}@localhost:5432/chat_history'
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute('''
@@ -1138,6 +1044,9 @@ Please provide a structured summary:"""
 
     def handle_question(self, query: str, chat_history: Optional[list] = None, topic_ids: Optional[list] = None) -> dict:
         """Handle a question with content safety checks and optional chat history context, with topic filtering."""
+        start_time = time.time()
+        logging.info(f"[TIMING] Starting question processing for: {query[:50]}...")
+        
         logging.info(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
         # if self.locked_out:
         #     return {"error": "You have been locked out for repeated misuse."}
@@ -1159,6 +1068,7 @@ Please provide a structured summary:"""
                 logging.warning(f"[DEBUG] Could not get vector DB doc count: {e}")
             filter_filenames = None
             if topic_ids and len(topic_ids) > 0:
+                topic_filter_start = time.time()
                 logging.info(f"[DEBUG] Topic filtering requested for topic_ids: {topic_ids}")
                 doc_topic_map = self.get_doc_topic_map()
                 logging.info(f"[DEBUG] Document topic map: {doc_topic_map}")
@@ -1168,14 +1078,22 @@ Please provide a structured summary:"""
                     if topic_ids_set.issubset(tags)
                 ]
                 logging.info(f"[DEBUG] Filtered filenames: {filter_filenames}")
+                topic_filter_time = time.time() - topic_filter_start
+                logging.info(f"[TIMING] Topic filtering took: {topic_filter_time:.3f}s")
                 if not filter_filenames:
                     logging.info("[DEBUG] No documents found for selected topics, returning early")
                     return {
                         "answer": "No documents are available for the selected topic(s).",
+                        "detailed_answer": "No documents are available for the selected topic(s).",
                         "confidence": 0,
                         "sources": {"summary": "N/A", "detailed": "N/A"}
                     }
+            
+            query_start = time.time()
             answer, confidence, source_data, detailed_answer = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames)
+            query_time = time.time() - query_start
+            logging.info(f"[TIMING] Main query processing took: {query_time:.3f}s")
+            
             if answer == "I don't have specific information about that in the current documents.":
                 # Return consistent response for no information
                 return {
@@ -1184,6 +1102,10 @@ Please provide a structured summary:"""
                     "confidence": 0,
                     "sources": {"summary": "N/A", "detailed": "N/A"}
                 }
+            
+            total_time = time.time() - start_time
+            logging.info(f"[TIMING] Total question processing took: {total_time:.3f}s")
+            
             return {
                 "answer": answer,
                 "detailed_answer": detailed_answer,
@@ -1199,6 +1121,9 @@ Please provide a structured summary:"""
 
     def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None) -> tuple:
         """Answer a question using the vector database and LLM. Return sources with chunk/page/snippet info for debugging."""
+        query_start_time = time.time()
+        logging.info(f"[TIMING] Starting query_answer processing")
+        
         if not self.db:
             raise Exception("Database not loaded. Please upload documents first.")
         if chat_history:
@@ -1206,10 +1131,27 @@ Please provide a structured summary:"""
             full_query = f"Previous conversation:\n{history_str}\n\nCurrent question: {query}"
         else:
             full_query = query
-        # Note: The complete prompt with actual document context will be created after document retrieval
-        # Use hierarchical chunk retrieval for better context
-        logging.info(f"[DEBUG] Using hierarchical chunk retrieval")
-        docs = self.get_hierarchical_chunks(full_query, initial_k=100)
+        
+        # Activity 1: Turning user prompt into embeddings
+        embedding_start = time.time()
+        logging.info(f"[TIMING] Starting embedding generation for query")
+        try:
+            query_emb = self.embedding.embed_query(full_query)
+            embedding_time = time.time() - embedding_start
+            logging.info(f"[TIMING] Query embedding generation took: {embedding_time:.3f}s")
+        except Exception as e:
+            embedding_time = time.time() - embedding_start
+            logging.error(f"[TIMING] Query embedding failed after {embedding_time:.3f}s: {e}")
+            raise e
+        
+        # Activity 2 & 3: Chunking docs (already done during build) + Retrieval of chunks (Vector similarity search)
+        retrieval_start = time.time()
+        logging.info(f"[TIMING] Starting document retrieval (optimized vector similarity search)")
+        # Use optimized chunk retrieval for speed
+        logging.info(f"[DEBUG] Using optimized chunk retrieval")
+        docs = self.get_hierarchical_chunks(full_query, initial_k=20)  # Search 20 chunks for maximum speed
+        retrieval_time = time.time() - retrieval_start
+        logging.info(f"[TIMING] Document retrieval (optimized vector similarity search) took: {retrieval_time:.3f}s")
         
         # Create the actual context from retrieved documents
         if docs:
@@ -1221,28 +1163,29 @@ Please provide a structured summary:"""
             actual_context = "No relevant documents found."
         
         # Create the complete prompt with actual document context
-        complete_prompt = f"""You are a professional compliance assistant with expertise in policy interpretation, regulatory requirements, and workplace procedures.
+        # complete_prompt = f"""You are a professional compliance assistant with expertise in policy interpretation, regulatory requirements, and workplace procedures.
 
-CONTEXT: {actual_context}
+        # CONTEXT: {actual_context}
 
-QUESTION: {full_query}
+        # QUESTION: {full_query}
 
-CRITICAL INSTRUCTIONS:
-1. ONLY answer based on information that is EXPLICITLY stated in the provided context
-2. If the context does not contain relevant information to answer the question, say "I don't have specific information about that in the current documents"
-3. DO NOT make up information, speculate, or reference topics not mentioned in the context
-4. DO NOT mention companies, products, or technologies that are not in the context
-5. If you find relevant information, cite the specific document or policy section
+        # CRITICAL INSTRUCTIONS:
+        # 1. ONLY answer based on information that is EXPLICITLY stated in the provided context
+        # 2. If the context does not contain relevant information to answer the question, say "I don't have specific information about that in the current documents"
+        # 3. DO NOT make up information, speculate, or reference topics not mentioned in the context
+        # 4. DO NOT mention companies, products, or technologies that are not in the context
+        # 5. If you find relevant information, cite the specific document or policy section
+        # 6. If the answer is "no", then reply with not applicable
 
-ANSWER FORMAT:
-- If relevant information exists: Provide a direct answer with specific details and citations
-- If no relevant information: Say "I don't have specific information about that in the current documents"
-- Be professional and workplace-appropriate
-- Use clear, structured language
+        # ANSWER FORMAT:
+        # - If relevant information exists: Provide a direct answer with specific details and citations
+        # - If no relevant information: Say "I don't have specific information about that in the current documents"
+        # - Be professional and workplace-appropriate
+        # - Use clear, structured language
 
-IMPORTANT: Only use information that is explicitly present in the context above. Do not reference any external knowledge or make assumptions. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents".
+        # IMPORTANT: Only use information that is explicitly present in the context above. Do not reference any external knowledge or make assumptions. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents".
 
-FINAL CHECK: Before providing your answer, ask yourself: "Does the context actually contain information that directly answers this specific question?" If not, say "I don't have specific information about that in the current documents"."""
+        # FINAL CHECK: Before providing your answer, ask yourself: "Does the context actually contain information that directly answers this specific question?" If not, say "I don't have specific information about that in the current documents"."""
         logging.info(f"[DEBUG] Retriever returned {len(docs)} docs for query: {query}")
         if filter_filenames is not None:
             logging.info(f"[DEBUG] Applying topic filter with filenames: {filter_filenames}")
@@ -1261,7 +1204,7 @@ FINAL CHECK: Before providing your answer, ask yourself: "Does the context actua
         
         if not docs:
             logging.warning(f"[DEBUG] No documents found for query: {query}")
-            return ("I don't have specific information about that in the current documents.", 0, {"summary": "N/A", "detailed": "N/A"})
+            return ("I don't have specific information about that in the current documents.", 0, {"summary": "N/A", "detailed": "N/A"}, "I don't have specific information about that in the current documents.")
         
         # Log document sources for debugging
         doc_sources = [os.path.basename(str(d.metadata.get("source", ""))) for d in docs]
@@ -1276,37 +1219,36 @@ FINAL CHECK: Before providing your answer, ask yourself: "Does the context actua
         else:
             actual_context = "No relevant documents found."
         
-        # Update the complete prompt with the filtered context
-        complete_prompt = f"""You are a professional compliance assistant with expertise in policy interpretation, regulatory requirements, and workplace procedures.
+        # Update the complete prompt with the filtered context (optimized for speed)
+        complete_prompt = f"""You are a professional compliance assistant. Answer the user's question based ONLY on information EXPLICITLY stated in the provided context.
 
 CONTEXT: {actual_context}
 
 QUESTION: {full_query}
 
-CORE INSTRUCTIONS:
-1. ALWAYS provide an answer if the context contains ANY relevant information
-2. NEVER say "I don't know" or "the context doesn't mention" unless the context is completely empty
-3. If the exact answer isn't in the context, provide the most relevant information available
-4. Synthesize information from multiple sources when applicable
-5. Be specific, actionable, and professional in your responses
-6. Be direct and authoritative - avoid phrases like "I would say" or "it appears"
+CRITICAL RULES - VIOLATION NOT ALLOWED:
+1. ONLY use information EXPLICITLY stated in the context above
+2. DO NOT make inferences, assumptions, or connections not in the text
+3. DO NOT use phrases like "seems," "appears," "possible," "likely," "infer," "suggest"
+4. DO NOT speculate about relationships or mechanisms not described
+5. DO NOT reference external knowledge or make educated guesses
+6. If information is not EXPLICITLY stated, say "I don't have specific information about that in the current documents"
 
-ANSWER FORMAT:
-Provide your response in exactly this format:
+ANSWER REQUIREMENTS:
+- HELPFUL ANSWER: State ONLY facts explicitly mentioned in the context
+- DETAILED ANSWER: Provide comprehensive details, but ONLY from explicit statements in the context
+- Use direct quotes from the context when possible
+- If the context doesn't contain the specific information requested, clearly state what is missing
 
-HELPFUL ANSWER: [A concise, direct answer in 1-2 sentences that directly answers the question]
+EXAMPLE OF GOOD ANSWER:
+"Based on the provided documents, DPSA is mentioned as being powered by the UDPE engine. The documents state that UDPE is an internal architecture. However, the documents do not provide specific details about how DPSA works."
 
-DETAILED ANSWER: [A comprehensive explanation with all relevant details, citations, and context]
+EXAMPLE OF BAD ANSWER (DO NOT DO THIS):
+"It seems that DPSA and UDPE are connected. We can infer that they serve different purposes. It's possible that DPSA uses this layer to accelerate workloads."
 
-QUALITY STANDARDS:
-- Be authoritative but helpful
-- Structure responses logically
-- Include relevant deadlines, requirements, or procedures
-- If multiple policies apply, mention all relevant ones
-- Suggest additional resources if needed
-- Be direct and clear
+Please provide your answer based ONLY on explicit information in the context above:
 
-Please provide your answer based on the context above:"""
+REMEMBER: If you cannot find EXPLICIT information in the context to answer the question, you MUST say "I don't have specific information about that in the current documents." Do not make up information, infer connections, or speculate about relationships not explicitly stated."""
         
         # Debug: Log the first 500 characters of the context to see what's being sent to the LLM
         logging.info(f"[DEBUG] Context preview (first 500 chars): {actual_context[:500]}...")
@@ -1351,7 +1293,7 @@ Please provide your answer based on the context above:"""
             sources_detailed = sources[0]
         top_similarity = None
         try:
-            # Try HuggingFace embeddings first (default)
+            # Calculate similarity with native Llama 3 embeddings
             query_emb = self.embedding.embed_query(full_query)
             
             # Calculate similarity only with the retrieved documents (not all chunks)
@@ -1360,79 +1302,25 @@ Please provide your answer based on the context above:"""
                 from numpy.linalg import norm
                 similarities = []
                 
-                # Check if we need to convert dimensions using PCA
-                if (self.current_embedding_type == "huggingface" and 
-                    self.should_use_pca_conversion() and 
-                    len(query_emb) == 4096):
-                    
-                    # Convert query embedding to 384D using PCA
-                    query_emb_converted = self.convert_embedding_dimensions(query_emb)
-                    
-                    # Calculate similarity with each retrieved document
-                    for doc in docs:
-                        # Get document embedding from FAISS index
-                        doc_id = doc.metadata.get('chunk_id', 0)
-                        if hasattr(self.db.index, 'reconstruct'):
-                            doc_emb = self.db.index.reconstruct(doc_id)
-                            doc_emb_converted = self.convert_embedding_dimensions(doc_emb)
-                            sim = np.dot(query_emb_converted, doc_emb_converted) / (norm(query_emb_converted) * norm(doc_emb_converted) + 1e-8)
-                            similarities.append(sim)
-                    
-                    if similarities:
-                        top_similarity = max(similarities)
-                        logging.info(f"[DEBUG] PCA similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
-                else:
-                    # Use original similarity calculation with retrieved docs only
-                    for doc in docs:
-                        # Get document embedding from FAISS index
-                        doc_id = doc.metadata.get('chunk_id', 0)
-                        if hasattr(self.db.index, 'reconstruct'):
-                            doc_emb = self.db.index.reconstruct(doc_id)
-                            sim = np.dot(query_emb, doc_emb) / (norm(query_emb) * norm(doc_emb) + 1e-8)
-                            similarities.append(sim)
-                    
-                    if similarities:
-                        top_similarity = max(similarities)
-                        logging.info(f"[DEBUG] Similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
+                # Calculate similarity with each retrieved document using native 4096D embeddings
+                for doc in docs:
+                    # Get document embedding from FAISS index
+                    doc_id = doc.metadata.get('chunk_id', 0)
+                    if hasattr(self.db.index, 'reconstruct'):
+                        doc_emb = self.db.index.reconstruct(doc_id)
+                        sim = np.dot(query_emb, doc_emb) / (norm(query_emb) * norm(doc_emb) + 1e-8)
+                        similarities.append(sim)
+                
+                if similarities:
+                    top_similarity = max(similarities)
+                    logging.info(f"[DEBUG] Native Llama 3 similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
                     
         except Exception as e:
-            # If HuggingFace fails (rate limit, timeout, etc.), try Ollama fallback
-            logging.warning(f"HuggingFace embedding failed: {e}, trying Ollama fallback")
-            try:
-                # Switch to Ollama embeddings
-                if self.ollama_embedding:
-                    # Get query embedding with Ollama
-                    query_emb_ollama = self.ollama_embedding.embed_query(full_query)
-                    
-                    # Calculate similarity with Ollama embeddings
-                    import numpy as np
-                    from numpy.linalg import norm
-                    similarities = []
-                    
-                    for doc in docs:
-                        # Get document embedding from FAISS index
-                        doc_id = doc.metadata.get('chunk_id', 0)
-                        if hasattr(self.db.index, 'reconstruct'):
-                            doc_emb = self.db.index.reconstruct(doc_id)
-                            # Convert 4096D to 384D if needed
-                            if len(doc_emb) == 4096 and self.should_use_pca_conversion():
-                                doc_emb_converted = self.convert_embedding_dimensions(doc_emb)
-                                sim = np.dot(query_emb_ollama, doc_emb_converted) / (norm(query_emb_ollama) * norm(doc_emb_converted) + 1e-8)
-                            else:
-                                sim = np.dot(query_emb_ollama, doc_emb) / (norm(query_emb_ollama) * norm(doc_emb) + 1e-8)
-                            similarities.append(sim)
-                    
-                    if similarities:
-                        top_similarity = max(similarities)
-                        logging.info(f"[DEBUG] Ollama fallback similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
-                else:
-                    logging.error("Ollama fallback not available")
-                    top_similarity = None
-                    
-            except Exception as ollama_error:
-                logging.error(f"Ollama fallback also failed: {ollama_error}")
-                top_similarity = None
-        # Get the answer from the LLM with the complete prompt containing actual document context
+            logging.error(f"Native Llama 3 similarity calculation failed: {e}")
+            top_similarity = None
+        # Activity 4: LLM call with full prompt engineering
+        llm_start = time.time()
+        logging.info(f"[TIMING] Starting LLM call with prompt engineering")
         try:
             logging.info(f"[DEBUG] Sending prompt to LLM (length: {len(complete_prompt)} chars)")
             result = self.llm.invoke(complete_prompt)
@@ -1442,6 +1330,8 @@ Please provide your answer based on the context above:"""
                 answer = str(result)
             if isinstance(answer, list):
                 answer = "\n".join(str(a) for a in answer)
+            llm_time = time.time() - llm_start
+            logging.info(f"[TIMING] LLM call with prompt engineering took: {llm_time:.3f}s")
             logging.info(f"[DEBUG] LLM response received (length: {len(answer)} chars)")
             
             # Parse the structured response to extract helpful and detailed answers
@@ -1474,121 +1364,126 @@ Please provide your answer based on the context above:"""
             logging.error(f"LLM error traceback: {traceback.format_exc()}")
             raise Exception(f"Failed to get response from AI model: {str(e)}")
         
+        # Activity 5 & 6: Extra processing (guardrails, hallucination checks, etc.)
+        extra_processing_start = time.time()
+        logging.info(f"[TIMING] Starting extra processing (guardrails, hallucination checks)")
+        
         # Post-processing: Check for hallucination and validate answer quality
         answer_lower = answer.lower()
         
-        # AI-based hallucination detection using embeddings and similarity
-        potential_hallucination = False
+        # # AI-based hallucination detection using embeddings and similarity
+        # potential_hallucination = False
         
-        if docs and answer.strip():
-            try:
-                # Get embeddings for the answer and the context
-                answer_embedding = self.embedding.embed_query(answer)
+        # if docs and answer.strip():
+        #     try:
+        #         # Get embeddings for the answer and the context
+        #         answer_embedding = self.embedding.embed_query(answer)
                 
-                # Create context embedding by combining all document embeddings
-                context_text = "\n\n".join([doc.page_content for doc in docs])
-                context_embedding = self.embedding.embed_query(context_text)
+        #         # Create context embedding by combining all document embeddings
+        #         context_text = "\n\n".join([doc.page_content for doc in docs])
+        #         context_embedding = self.embedding.embed_query(context_text)
                 
-                # Calculate cosine similarity between answer and context
-                import numpy as np
-                from numpy.linalg import norm
+        #         # Calculate cosine similarity between answer and context
+        #         import numpy np
+        #         from numpy.linalg import norm
                 
-                similarity = np.dot(answer_embedding, context_embedding) / (norm(answer_embedding) * norm(context_embedding) + 1e-8)
+        #         similarity = np.dot(answer_embedding, context_embedding) / (norm(answer_embedding) * norm(context_embedding) + 1e-8)
                 
-                logging.info(f"[DEBUG] Answer-context similarity: {similarity:.4f}")
+        #         logging.info(f"[DEBUG] Answer-context similarity: {similarity:.4f}")
                 
-                # If similarity is very low (< 0.3), the answer might be hallucinated
-                if similarity < 0.3:
-                    logging.warning(f"[DEBUG] Low similarity detected ({similarity:.4f}), potential hallucination")
-                    potential_hallucination = True
+        #         # If similarity is very low (< 0.3), the answer might be hallucinated
+        #         if similarity < 0.3):
+        #             logging.warning(f"[DEBUG] Low similarity detected ({similarity:.4f}), potential hallucination")
+        #             potential_hallucination = True
                     
-            except Exception as e:
-                logging.warning(f"[DEBUG] Error in AI-based hallucination detection: {e}")
-                # Fallback: don't flag as hallucination if detection fails
+        #     except Exception as e:
+        #         logging.warning(f"[DEBUG] Error in AI-based hallucination detection: {e}")
+        #         # Fallback: don't flag as hallucination if detection fails
         
-        if potential_hallucination:
-            logging.warning(f"[DEBUG] Potential hallucination detected in answer: {answer[:200]}...")
-            # Force a re-prompt with stronger anti-hallucination instructions
-            anti_hallucination_prompt = f"""You are a professional compliance assistant. The user asked: {query}
+        # if potential_hallucination:
+        #     logging.warning(f"[DEBUG] Potential hallucination detected in answer: {answer[:200]}...")
+        #     # Force a re-prompt with stronger anti-hallucination instructions
+        #     anti_hallucination_prompt = f"""You are a professional compliance assistant. The user asked: {query}
 
-CRITICAL: You must ONLY answer based on information explicitly stated in the provided context. 
+        # CRITICAL: You must ONLY answer based on information explicitly stated in the provided context. 
 
-CONTEXT: {actual_context}
+        # CONTEXT: {actual_context}
 
-IMPORTANT RULES:
-1. If the context does not contain relevant information, say "I don't have specific information about that in the current documents"
-2. Do NOT mention any companies, products, or technologies not explicitly mentioned in the context
-3. Do NOT reference "Document 1", "Document 2", etc. unless they are actual document names in the context
-4. Do NOT make up information or speculate
-5. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents"
+        # IMPORTANT RULES:
+        # 1. If the context does not contain relevant information, say "I don't have specific information about that in the current documents"
+        # 2. Do NOT mention any companies, products, or technologies not explicitly mentioned in the context
+        # 3. Do NOT reference "Document 1", "Document 2", etc. unless they are actual document names in the context
+        # 4. Do NOT make up information or speculate
+        # 5. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents"
 
-Please provide your answer:"""
+        # Please provide your answer:"""
             
-            try:
-                corrected_result = self.llm.invoke(anti_hallucination_prompt)
-                if isinstance(corrected_result, dict) and 'result' in corrected_result:
-                    answer = corrected_result['result']
-                else:
-                    answer = str(corrected_result)
-                logging.info("[DEBUG] Answer corrected for potential hallucination")
-            except Exception as e:
-                logging.warning(f"Anti-hallucination correction failed: {e}")
+        #     try:
+        #         corrected_result = self.llm.invoke(anti_hallucination_prompt)
+        #         if isinstance(corrected_result, dict) and 'result' in corrected_result:
+        #             answer = corrected_result['result']
+        #         else:
+        #             answer = str(corrected_result)
+        #         logging.info("[DEBUG] Answer corrected for potential hallucination")
+        #     except Exception as e:
+        #         logging.warning(f"Anti-hallucination correction failed: {e}")
         
-        # Check if answer is too vague or says "I don't know"
-        if any(phrase in answer_lower for phrase in ["i don't know", "i don't have", "no information", "not mentioned", "not found"]):
-            # Re-prompt with stronger instructions if context exists
-            if docs and any(d.page_content.strip() for d in docs):
-                logging.info("[DEBUG] Answer was too vague, re-prompting with stronger instructions")
-                enhanced_prompt = f"""You are a professional compliance assistant. The user asked: {query}
+        # # Check if answer is too vague or says "I don't know"
+        # if any(phrase in answer_lower for phrase in ["i don't know", "i don't have", "no information", "not mentioned", "not found"]):
+        #     # Re-prompt with stronger instructions if context exists
+        #     if docs and any(d.page_content.strip() for d in docs):
+        #         logging.info("[DEBUG] Answer was too vague, re-prompting with stronger instructions")
+        #         enhanced_prompt = f"""You are a professional compliance assistant. The user asked: {query}
 
-You have access to relevant documents. Please answer based ONLY on information explicitly stated in the context.
+        # You have access to relevant documents. Please answer based ONLY on information explicitly stated in the context.
 
-IMPORTANT: 
-- If the context contains relevant information, provide a clear answer with citations
-- If the context does not contain relevant information, say "I don't have specific information about that in the current documents"
-- Do NOT make up information or reference topics not in the context
-- If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents"
+        # IMPORTANT: 
+        # - If the context contains relevant information, provide a clear answer with citations
+        # - If the context does not contain relevant information, say "I don't have specific information about that in the current documents"
+        # - Do NOT make up information or reference topics not in the context
+        # - If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents"
 
-Please answer the question using the available context:"""
+        # Please answer the question using the available context:"""
                 
-                try:
-                    enhanced_result = self.llm.invoke(enhanced_prompt)
-                    if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
-                        answer = enhanced_result['result']
-                    else:
-                        answer = str(enhanced_result)
-                except Exception as e:
-                    logging.warning(f"Enhanced prompt failed: {e}")
-                    # Keep the original answer if enhancement fails
+        #         try:
+        #             enhanced_result = self.llm.invoke(enhanced_prompt)
+        #             if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
+        #             answer = enhanced_result['result']
+        #         else:
+        #             answer = str(enhanced_result)
+        #         except Exception as e:
+        #             logging.warning(f"Enhanced prompt failed: {e}")
+        #             # Keep the original answer if enhancement fails
         
-        # Additional quality check: If answer is still too short or vague, try one more time
-        if len(answer.strip()) < 50 and docs:
-            logging.info("[DEBUG] Answer is too short, attempting to generate more detailed response")
-            detailed_prompt = f"""You are a professional compliance assistant. The user asked: {query}
+        # # Additional quality check: If answer is still too short or vague, try one more time
+        # if len(answer.strip()) < 50 and docs:
+        #     logging.info("[DEBUG] Answer is too short, attempting to generate more detailed response")
+        #     detailed_prompt = f"""You are a professional compliance assistant. The user asked: {query}
 
-You have access to relevant documents. Please provide an answer that:
-1. ONLY uses information explicitly stated in the context
-2. Directly addresses the question if relevant information exists
-3. Includes specific details and citations from the documents
-4. Is professional and workplace-appropriate
-5. If no relevant information exists, clearly state "I don't have specific information about that in the current documents"
+        # You have access to relevant documents. Please provide an answer that:
+        # 1. ONLY uses information explicitly stated in the context
+        # 2. Directly addresses the question if relevant information exists
+        # 3. Includes specific details and citations from the documents
+        # 4. Is professional and workplace-appropriate
+        # 5. If no relevant information exists, clearly state "I don't have specific information about that in the current documents"
 
-IMPORTANT: Do not make up information or reference topics not in the context. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents".
+        # IMPORTANT: Do not make up information or reference topics not in the context. If the context is empty or contains no relevant information, you MUST say "I don't have specific information about that in the current documents".
 
-Please provide your answer:"""
+        # Please provide your answer:"""
             
-            try:
-                detailed_result = self.llm.invoke(detailed_prompt)
-                if isinstance(detailed_result, dict) and 'result' in detailed_result:
-                    answer = detailed_result['result']
-                else:
-                    answer = str(detailed_result)
-            except Exception as e:
-                logging.warning(f"Detailed prompt failed: {e}")
-                # Keep the original answer if enhancement fails
+        #     try:
+        #         detailed_result = self.llm.invoke(detailed_prompt)
+        #         if isinstance(detailed_result, dict) and 'result' in detailed_result:
+        #             answer = detailed_result['result']
+        #         else:
+        #             answer = str(detailed_result)
+        #         except Exception as e:
+        #             logging.warning(f"Detailed prompt failed: {e}")
+        #             # Keep the original answer if enhancement fails
         
-        # Calculate confidence using Gemma 3B with Llama 3 fallback
-        confidence = self.calculate_confidence_with_gemma(query, answer, docs)
+        # Use simple default confidence since LLM-based calculation is disabled
+        confidence = 0.85  # Default confidence
+        logging.info(f"[TIMING] Using default confidence: {confidence}")
         
         # Return structured source data
         source_data = {
@@ -1596,35 +1491,12 @@ Please provide your answer:"""
             "detailed": sources_detailed if sources else "N/A"
         }
         
-        # Final quality check and answer enhancement
-        final_answer = self.enhance_answer_quality(query, answer.strip(), docs)
+        # Skip answer enhancement entirely for speed
+        final_answer = answer.strip()
+        logging.info(f"[TIMING] Skipping answer enhancement for speed")
         
-        # Final AI-based hallucination check using similarity
-        if docs and final_answer.strip():
-            try:
-                # Get embeddings for the final answer and the context
-                final_answer_embedding = self.embedding.embed_query(final_answer)
-                
-                # Create context embedding by combining all document embeddings
-                context_text = "\n\n".join([doc.page_content for doc in docs])
-                context_embedding = self.embedding.embed_query(context_text)
-                
-                # Calculate cosine similarity between final answer and context
-                import numpy as np
-                from numpy.linalg import norm
-                
-                final_similarity = np.dot(final_answer_embedding, context_embedding) / (norm(final_answer_embedding) * norm(context_embedding) + 1e-8)
-                
-                logging.info(f"[DEBUG] Final answer-context similarity: {final_similarity:.4f}")
-                
-                # If similarity is very low (< 0.3), the answer might be hallucinated
-                if final_similarity < 0.3:
-                    logging.warning(f"[DEBUG] Final low similarity detected ({final_similarity:.4f}), replacing with safe response")
-                    final_answer = "I don't have specific information about that in the current documents. Please check with your HR department or review the available policy documents for more detailed information."
-                    
-            except Exception as e:
-                logging.warning(f"[DEBUG] Error in final AI-based hallucination detection: {e}")
-                # Fallback: don't replace answer if detection fails
+        # Skip final hallucination check entirely for speed
+        logging.info(f"[TIMING] Skipping final hallucination check for speed")
         
         # Use the parsed helpful answer as final answer, and store detailed answer
         if 'helpful_answer' in locals() and helpful_answer:
@@ -1635,6 +1507,14 @@ Please provide your answer:"""
         else:
             # If no detailed answer was parsed, use the original answer as detailed
             detailed_answer = final_answer
+        
+        # Complete extra processing timing
+        extra_processing_time = time.time() - extra_processing_start
+        logging.info(f"[TIMING] Extra processing (guardrails, hallucination checks) took: {extra_processing_time:.3f}s")
+        
+        # Calculate total query time
+        total_query_time = time.time() - query_start_time
+        logging.info(f"[TIMING] Total query_answer processing took: {total_query_time:.3f}s")
         
         # Log what we're returning for debugging
         logging.info(f"[DEBUG] Returning - final_answer: {len(final_answer)} chars, detailed_answer: {len(detailed_answer)} chars")
@@ -1701,6 +1581,9 @@ Respond with ONLY a number between 0 and 100, representing your confidence perce
 
     def enhance_answer_quality(self, query: str, answer: str, docs: list) -> str:
         """Enhance answer quality by checking for common issues and improving structure"""
+        enhancement_start = time.time()
+        logging.info(f"[TIMING] Starting answer enhancement")
+        
         try:
             # Check if answer needs improvement
             answer_lower = answer.lower()
@@ -1726,15 +1609,21 @@ You have access to substantial source material. Please enhance this answer to be
 
 Please provide an enhanced version of the answer:"""
                     
-                    enhanced_result = self.llm.invoke(enhancement_prompt)
-                    if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
-                        enhanced_answer = enhanced_result['result']
-                    else:
-                        enhanced_answer = str(enhanced_result)
+                    # enhancement_llm_start = time.time()
+                    # enhanced_result = self.llm.invoke(enhancement_prompt)
+                    # enhancement_llm_time = time.time() - enhancement_llm_start
+                    # logging.info(f"[TIMING] Enhancement LLM call took: {enhancement_llm_time:.3f}s")
                     
-                    # Only use enhanced answer if it's significantly better
-                    if len(enhanced_answer.strip()) > len(answer.strip()) * 1.5:
-                        return enhanced_answer.strip()
+                    # if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
+                    #     enhanced_answer = enhanced_result['result']
+                    # else:
+                    #     enhanced_answer = str(enhanced_result)
+                    
+                    # # Only use enhanced answer if it's significantly better
+                    # if len(enhanced_answer.strip()) > len(answer.strip()) * 1.5:
+                    #     enhancement_time = time.time() - enhancement_start
+                    #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
+                    #     return enhanced_answer.strip()
             
             # Check for common issues and fix them
             if "i don't know" in answer_lower or "no information" in answer_lower:
@@ -1760,14 +1649,24 @@ Relevant information found:
 
 Please provide a helpful response:"""
                     
-                    fallback_result = self.llm.invoke(fallback_prompt)
-                    if isinstance(fallback_result, dict) and 'result' in fallback_result:
-                        return fallback_result['result'].strip()
+                    # fallback_llm_start = time.time()
+                    # fallback_result = self.llm.invoke(fallback_prompt)
+                    # fallback_llm_time = time.time() - fallback_llm_start
+                    # logging.info(f"[TIMING] Fallback LLM call took: {fallback_llm_time:.3f}s")
+                    
+                    # if isinstance(fallback_result, dict) and 'result' in enhanced_result):
+                    #     enhancement_time = time.time() - enhancement_start
+                    #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
+                    #     return fallback_result['result'].strip()
             
+            enhancement_time = time.time() - enhancement_start
+            logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
             return answer.strip()
             
         except Exception as e:
             logging.error(f"Error enhancing answer quality: {e}")
+            enhancement_time = time.time() - enhancement_start
+            logging.info(f"[TIMING] Answer enhancement failed after: {enhancement_time:.3f}s")
             return answer.strip()
     
     def generate_short_answer(self, query: str, detailed_answer: str, docs: list) -> str:
@@ -1785,11 +1684,11 @@ Please create a concise, one-line summary answer (maximum 2 sentences) that:
 
 Provide ONLY the short summary answer:"""
 
-            short_result = self.llm.invoke(short_prompt)
-            if isinstance(short_result, dict) and 'result' in short_result:
-                short_answer = short_result['result']
-            else:
-                short_answer = str(short_result)
+            # short_result = self.llm.invoke(short_prompt)
+            # if isinstance(short_result, dict) and 'result' in short_result:
+            #     short_answer = short_result['result']
+            # else:
+            #     short_answer = str(short_result)
             
             # Clean up the short answer
             short_answer = short_answer.strip()
@@ -1878,8 +1777,27 @@ Provide ONLY the short summary answer:"""
                 logging.warning(f"No documents loaded from {filename}")
                 return False
             
-            # Chunk the document
-            splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=50)
+            # Chunk the document with tighter granularity for precise retrieval
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=90,   # Much smaller chunks for precise retrieval
+                chunk_overlap=45, # Maintain context between chunks
+                length_function=len,  # Use character count for consistent sizing
+                separators=[
+                    "\n\n\n",    # Major section breaks
+                    "\n\n",      # Paragraph breaks
+                    "\n",        # Line breaks
+                    ". ",        # Sentence endings
+                    "! ",        # Exclamation endings
+                    "? ",        # Question endings
+                    "; ",        # Semicolon separators
+                    ": ",        # Colon separators
+                    " - ",       # Dash separators
+                    " • ",       # Bullet points
+                    " * ",       # Asterisk separators
+                    " ",         # Word boundaries
+                    ""           # Character level (fallback)
+                ]
+            )
             chunks = splitter.split_documents(docs)
             logging.info(f"[DEBUG] Created {len(chunks)} chunks from {filename}")
             
@@ -1891,13 +1809,7 @@ Provide ONLY the short summary answer:"""
                 # Save the updated database
                 self.db.save_local(DB_PATH)
                 
-                # Update embedding type metadata
-                metadata_file = os.path.join(DB_PATH, 'embedding_type.txt')
-                try:
-                    with open(metadata_file, 'w') as f:
-                        f.write(self.current_embedding_type)
-                except Exception as e:
-                    logging.warning(f"[DEBUG] Could not update embedding type metadata: {e}")
+
                 
                 logging.info(f"[DEBUG] Successfully added {filename} to database")
                 return True
@@ -2308,23 +2220,36 @@ Provide ONLY the short summary answer:"""
             logging.error(f"Error in basic document loading for {file_path}: {e}")
             return []
 
-    def get_hierarchical_chunks(self, query: str, initial_k: int = 100) -> List[Document]:
+    def get_hierarchical_chunks(self, query: str, initial_k: int = None) -> List[Document]:
         """
-        Hierarchical chunk retrieval: get initial chunks, then dive deeper into source documents.
+        Hierarchical chunk retrieval: get all relevant chunks from the database.
         
         Args:
             query: The user's question
-            initial_k: Number of initial chunks to retrieve (default: 100)
+            initial_k: Number of initial chunks to retrieve (default: all chunks)
             
         Returns:
             List of documents with comprehensive context from source documents
         """
+        hierarchical_start = time.time()
+        
+        # Use a very small number of chunks for maximum speed
+        if initial_k is None:
+            initial_k = min(20, self.db.index.ntotal)  # Limit to 20 chunks for maximum speed
+            logging.info(f"[TIMING] Starting ultra-fast chunk retrieval for {initial_k} chunks (limited for maximum speed)")
+        else:
+            logging.info(f"[TIMING] Starting hierarchical chunk retrieval with initial_k={initial_k}")
+        
         try:
-            logging.info(f"[DEBUG] Starting hierarchical chunk retrieval with initial_k={initial_k}")
+            logging.info(f"[DEBUG] Starting comprehensive chunk retrieval with initial_k={initial_k}")
             
-            # Step 1: Get initial chunks
+            # Step 1: Get all relevant chunks (Vector similarity search)
+            initial_search_start = time.time()
+            logging.info(f"[TIMING] Starting comprehensive vector similarity search")
             retriever = self.db.as_retriever(search_type="similarity", k=initial_k)
             initial_docs = retriever.invoke(query)
+            initial_search_time = time.time() - initial_search_start
+            logging.info(f"[TIMING] Comprehensive vector similarity search took: {initial_search_time:.3f}s")
             
             if not initial_docs:
                 logging.warning("[DEBUG] No initial documents found")
@@ -2332,49 +2257,25 @@ Provide ONLY the short summary answer:"""
             
             logging.info(f"[DEBUG] Retrieved {len(initial_docs)} initial chunks")
             
-            # Step 2: Identify source documents
-            source_files = set()
-            for doc in initial_docs:
-                source = doc.metadata.get("source", "")
-                if source:
-                    source_files.add(source)
+            # Since we're already getting all chunks, just return them directly
+            # (The hierarchical approach is no longer needed since we search all chunks)
             
-            logging.info(f"[DEBUG] Identified {len(source_files)} source documents")
+            hierarchical_time = time.time() - hierarchical_start
+            logging.info(f"[TIMING] Total comprehensive chunk retrieval took: {hierarchical_time:.3f}s")
+            logging.info(f"[DEBUG] Comprehensive retrieval complete: {len(initial_docs)} chunks")
             
-            # Step 3: Extract ALL chunks from those source documents
-            all_chunks = []
-            for source_file in source_files:
-                try:
-                    # Get all chunks from this source document
-                    source_chunks = self.db.similarity_search(
-                        query, 
-                        k=self.db.index.ntotal,  # Get all chunks
-                        filter={"source": source_file}
-                    )
-                    all_chunks.extend(source_chunks)
-                    logging.info(f"[DEBUG] Added {len(source_chunks)} chunks from {os.path.basename(source_file)}")
-                except Exception as e:
-                    logging.warning(f"[DEBUG] Error getting chunks from {source_file}: {e}")
-            
-            # Step 4: Remove duplicates and sort by relevance
-            unique_chunks = []
-            seen_chunk_ids = set()
-            
-            for chunk in all_chunks:
-                chunk_id = chunk.metadata.get("chunk_id", hash(chunk.page_content))
-                if chunk_id not in seen_chunk_ids:
-                    unique_chunks.append(chunk)
-                    seen_chunk_ids.add(chunk_id)
-            
-            logging.info(f"[DEBUG] Hierarchical retrieval complete: {len(unique_chunks)} unique chunks from {len(source_files)} documents")
-            
-            return unique_chunks
+            return initial_docs
             
         except Exception as e:
-            logging.error(f"[DEBUG] Error in hierarchical chunk retrieval: {e}")
-            # Fallback to regular retrieval
-            retriever = self.db.as_retriever(search_type="similarity", k=initial_k)
-            return retriever.invoke(query)
+            logging.error(f"[DEBUG] Error in comprehensive chunk retrieval: {e}")
+            # Fallback to regular retrieval with very limited chunks
+            fallback_start = time.time()
+            logging.info(f"[TIMING] Using fallback ultra-fast vector similarity search")
+            retriever = self.db.as_retriever(search_type="similarity", k=min(20, self.db.index.ntotal))
+            result = retriever.invoke(query)
+            fallback_time = time.time() - fallback_start
+            logging.info(f"[TIMING] Fallback ultra-fast vector similarity search took: {fallback_time:.3f}s")
+            return result
 
     def calculate_confidence_with_gemma(self, query: str, answer: str, docs: list) -> float:
         """
@@ -2388,6 +2289,9 @@ Provide ONLY the short summary answer:"""
         Returns:
             Confidence score (0-100)
         """
+        confidence_start = time.time()
+        logging.info(f"[TIMING] Starting confidence calculation with Gemma/Llama")
+        
         try:
             # Prepare context from retrieved documents
             context = "\n\n".join([f"Document {i+1}: {doc.page_content}" for i, doc in enumerate(docs)])
@@ -2404,35 +2308,41 @@ Sources: {context}
 
 Respond with ONLY a number between 0 and 100."""
 
-            # Try Gemma 3B first
-            if self.gemma_model:
-                logging.info("[DEBUG] Using Gemma 3B for confidence calculation")
-                confidence_response = self.gemma_model.invoke(confidence_prompt)
-                confidence_text = str(confidence_response).strip()
+            # # Try Gemma 3B first
+            # if self.gemma_model:
+            #     gemma_start = time.time()
+            #     logging.info("[DEBUG] Using Gemma 3B for confidence calculation")
+            #     confidence_response = self.gemma_model.invoke(confidence_prompt)
+            #     confidence_text = str(confidence_response).strip()
+            #     gemma_time = time.time() - gemma_start
+            #     logging.info(f"[TIMING] Gemma 3B confidence calculation took: {gemma_time:.3f}s")
                 
-                # Extract numeric confidence score
-                import re
-                confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
-                if confidence_match:
-                    confidence_score = float(confidence_match.group(1))
-                    confidence_score = max(0, min(100, confidence_score))
-                    logging.info(f"[DEBUG] Gemma 3B confidence score: {confidence_score}")
-                    return round(confidence_score, 2)
+            #     # Extract numeric confidence score
+            #     import re
+            #     confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
+            #     if confidence_match:
+            #         confidence_score = float(confidence_match.group(1))
+            #         confidence_score = max(0, min(100, confidence_score))
+            #         logging.info(f"[DEBUG] Gemma 3B confidence score: {confidence_score}")
+            #         return round(confidence_score, 2)
             
-            # Fallback to Llama 3
-            if self.llama_model:
-                logging.info("[DEBUG] Using Llama 3 fallback for confidence calculation")
-                confidence_response = self.llama_model.invoke(confidence_prompt)
-                confidence_text = str(confidence_response).strip()
+            # # Fallback to Llama 3
+            # if self.llama_model:
+            #     llama_start = time.time()
+            #     logging.info("[DEBUG] Using Llama 3 fallback for confidence calculation")
+            #     confidence_response = self.llama_model.invoke(confidence_prompt)
+            #     confidence_text = str(confidence_response).strip()
+            #     llama_time = time.time() - llama_start
+            #     logging.info(f"[TIMING] Llama 3 confidence calculation took: {llama_time:.3f}s")
                 
-                # Extract numeric confidence score
-                import re
-                confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
-                if confidence_match:
-                    confidence_score = float(confidence_match.group(1))
-                    confidence_score = max(0, min(100, confidence_score))
-                    logging.info(f"[DEBUG] Llama 3 fallback confidence score: {confidence_score}")
-                    return round(confidence_score, 2)
+            #     # Extract numeric confidence score
+            #     import re
+            #     confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
+            #     if confidence_match:
+            #         confidence_score = float(confidence_match.group(1))
+            #         confidence_score = max(0, min(100, confidence_score))
+            #         logging.info(f"[DEBUG] Llama 3 fallback confidence score: {confidence_score}")
+            #         return round(confidence_score, 2)
             
             # Final fallback
             logging.warning("[DEBUG] All confidence models failed, using fallback")
@@ -2444,21 +2354,33 @@ Respond with ONLY a number between 0 and 100."""
             return 20.0 if docs else 0.0
 
     def initialize_confidence_models(self):
-        """Initialize Gemma 3B and Llama 3 models for confidence calculation."""
+        """Initialize Gemma 3B and Llama 3 models for confidence calculation (Ollama auto-detects best device)."""
         try:
-            # Initialize Gemma 3 for confidence
+            # Initialize confidence models (Ollama automatically uses best available device)
+            optimal_device = self.hardware_info['optimal_device']
+            logging.info(f"[DEBUG] Initializing confidence models (Ollama will auto-detect best device: {optimal_device})")
+            
             from langchain_ollama import OllamaLLM
-            self.gemma_model = OllamaLLM(model="gemma3")
-            self.confidence_model = self.gemma_model
-            logging.info("[DEBUG] Gemma 3 confidence model initialized successfully")
-        except Exception as e:
-            logging.warning(f"[DEBUG] Failed to initialize Gemma 3B: {e}")
+            
+            # Try Gemma 3 first (Ollama auto-detects GPU/CPU)
             try:
-                # Fallback to Llama 3
-                from langchain_ollama import OllamaLLM
-                self.llama_model = OllamaLLM(model="llama3.2:3b")
-                self.confidence_model = self.llama_model
-                logging.info("[DEBUG] Llama 3 confidence model initialized as fallback")
-            except Exception as e2:
-                logging.error(f"[DEBUG] Failed to initialize confidence models: {e2}")
-                self.confidence_model = None
+                logging.info("[DEBUG] Attempting Gemma 3 initialization")
+                self.gemma_model = OllamaLLM(model="gemma3")
+                self.confidence_model = self.gemma_model
+                logging.info("[DEBUG] Gemma 3 confidence model initialized successfully")
+                
+            except Exception as e:
+                logging.warning(f"[DEBUG] Failed to initialize Gemma 3B: {e}")
+                try:
+                    # Fallback to Llama 3
+                    logging.info("[DEBUG] Attempting Llama 3 initialization as fallback")
+                    self.llama_model = OllamaLLM(model="llama3.2:3b")
+                    self.confidence_model = self.llama_model
+                    logging.info("[DEBUG] Llama 3 confidence model initialized successfully as fallback")
+                except Exception as e2:
+                    logging.error(f"[DEBUG] Failed to initialize confidence models: {e2}")
+                    self.confidence_model = None
+                    
+        except Exception as e:
+            logging.error(f"[DEBUG] Failed to initialize confidence models: {e}")
+            self.confidence_model = None

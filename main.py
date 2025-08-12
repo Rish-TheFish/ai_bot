@@ -1,11 +1,31 @@
 from flask import Flask, render_template, request, jsonify, session, send_file
 import os
 from ai_bot import AIApp
-from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, UPLOAD_PIN, MODEL_NAME, PASSWORD
+from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, PASSWORD
+# UPLOAD_PIN commented out for now
 from Logistics_Files.backend_log import add_backend_log, backend_logs
 import io
 import csv
-from PyPDF2 import PdfReader
+
+# Handle PDF imports with fallbacks
+try:
+    from PyPDF2 import PdfReader
+    PDF_READER_AVAILABLE = True
+    print("✓ PyPDF2 imported successfully")
+except ImportError:
+    try:
+        from pypdf import PdfReader
+        PDF_READER_AVAILABLE = True
+        print("✓ pypdf imported successfully (PyPDF2 alternative)")
+    except ImportError:
+        try:
+            import fitz  # PyMuPDF
+            PDF_READER_AVAILABLE = True
+            print("✓ PyMuPDF imported successfully (PDF fallback)")
+        except ImportError:
+            PDF_READER_AVAILABLE = False
+            print("⚠ Warning: No PDF reader available. PDF uploads will not work.")
+
 from docx import Document as DocxReader
 import xml.etree.ElementTree as ET
 import psycopg2
@@ -38,17 +58,17 @@ ai_app_ready = False
 ai_app_error = None
 
 # Session security settings
-app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
 
 # Database setup - PostgreSQL
-DATABASE_URL = f'postgresql://postgres:{PASSWORD}@127.0.0.1:5432/chat_history'
+DATABASE_URL = f'postgresql://postgres:{PASSWORD}@localhost:5432/chat_history'
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable must be set")
 
 # Use environment variable for upload PIN
-UPLOAD_PIN = os.getenv('UPLOAD_PIN', '1964')
+# UPLOAD_PIN = os.getenv('UPLOAD_PIN', '1964')  # Commented out for now
 
 def validate_email(email):
     """Validate email format"""
@@ -269,8 +289,9 @@ def get_or_init_ai_app():
         global ai_app, ai_app_initializing, ai_app_ready, ai_app_error
         try:
             add_backend_log("Creating AI app instance...")
+            add_backend_log("Step 1: Starting AIApp constructor...")
             ai_app = AIApp(None)
-            add_backend_log("AI app instance created successfully")
+            add_backend_log("Step 2: AI app instance created successfully")
             
             # Check if database exists and is valid
             add_backend_log("Checking if database exists and is valid...")
@@ -317,9 +338,9 @@ def get_or_init_ai_app():
     # Set a timeout to prevent hanging
     def timeout_handler():
         global ai_app_initializing, ai_app_ready, ai_app_error
-        time.sleep(30)  # 30 second timeout (increased to allow for database building)
+        time.sleep(120)  # 120 second timeout (increased to allow for model loading and database building)
         if ai_app_initializing:
-            add_backend_log("Background initialization timed out - setting as ready")
+            add_backend_log("Background initialization timed out after 120 seconds - setting as ready")
             ai_app_initializing = False
             ai_app_ready = True
             ai_app_error = "Initialization timed out"
@@ -568,9 +589,9 @@ def upload_docs():
     if not ai_app:
         return jsonify({'error': 'AI Assistant not available'})
     
-    pin = request.form.get('pin')
-    if pin != UPLOAD_PIN:
-        return jsonify({'error': 'Invalid security PIN.'})
+    # pin = request.form.get('pin')
+    # if pin != UPLOAD_PIN:
+    #     return jsonify({'error': 'Invalid security PIN.'})
     
     files = request.files.getlist('files')
     temp_paths = []
@@ -1959,7 +1980,7 @@ if __name__ == '__main__':
         print(f"Error initializing database: {e}")
     
     import socket
-    host = '127.0.0.1'
+    host = '0.0.0.0'  # Allow external connections in container
     port = 5000
     print(f' * Running on http://{host}:{port}')
     try:
@@ -1969,4 +1990,4 @@ if __name__ == '__main__':
             print(f' * Running on http://{local_ip}:{port}')
     except Exception as e:
         print(f' * Could not determine local IP: {e}')
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port, debug=False)  # Disable debug in production

@@ -61,7 +61,26 @@ def build_db() -> None:
         if not all_docs:
             logging.warning("⚠️ No documents loaded.")
             return
-        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=90,   # Much smaller chunks for precise retrieval
+            chunk_overlap=45, # Maintain context between chunks
+            length_function=len,  # Use character count for consistent sizing
+            separators=[
+                "\n\n\n",    # Major section breaks
+                "\n\n",      # Paragraph breaks
+                "\n",        # Line breaks
+                ". ",        # Sentence endings
+                "! ",        # Exclamation endings
+                "? ",        # Question endings
+                "; ",        # Semicolon separators
+                ": ",        # Colon separators
+                " - ",       # Dash separators
+                " • ",       # Bullet points
+                " * ",       # Asterisk separators
+                " ",         # Word boundaries
+                ""           # Character level (fallback)
+            ]
+        )
         chunks = splitter.split_documents(all_docs)
         embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         db = FAISS.from_documents(chunks, embeddings)

@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🧠 AI Question Answering Assistant</title>
+    <title>🧠 DP AI Assistant</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #87CEEB 0%, #B0E0E6 100%);
             min-height: 100vh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
@@ -25,7 +25,7 @@
             min-height: 0;
         }
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
             color: white;
             padding: 20px 20px 0 20px;
             border-radius: 20px 20px 0 0;
@@ -51,7 +51,7 @@
             line-height: 1.5;
         }
         .user-message {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #87CEEB 0%, #B0E0E6 100%);
             color: white;
             margin-left: auto;
             font-size: 1.1rem;
@@ -60,7 +60,7 @@
         .ai-message {
             background: #e9ecef;
             color: #333;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #87CEEB;
             font-size: 1.1rem;
             font-weight: 500;
         }
@@ -71,7 +71,7 @@
             flex-shrink: 0;
         }
         .btn-custom {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #87CEEB 0%, #B0E0E6 100%);
             border: none;
             color: white;
             border-radius: 25px;
@@ -86,8 +86,8 @@
             padding: 12px 20px;
         }
         .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+            border-color: #87CEEB;
+            box-shadow: 0 0 0 0.2rem rgba(135, 206, 235, 0.25);
         }
         .status-indicator {
             width: 10px;
@@ -116,7 +116,7 @@
         }
         .spinner {
             border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+            border-top: 4px solid #87CEEB;
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -128,7 +128,7 @@
             100% { transform: rotate(360deg); }
         }
         .file-upload-area {
-            border: 2px dashed #667eea;
+            border: 2px dashed #87CEEB;
             border-radius: 15px;
             padding: 30px;
             text-align: center;
@@ -137,7 +137,7 @@
             margin: 20px 0;
         }
         .file-upload-area:hover {
-            border-color: #764ba2;
+            border-color: #B0E0E6;
             background: #e9ecef;
         }
         .hidden { display: none !important; }
@@ -171,7 +171,7 @@
         }
         
         .answer-toggle {
-            color: #667eea;
+            color: #87CEEB;
             cursor: pointer;
             font-size: 0.9em;
             font-weight: 500;
@@ -181,7 +181,7 @@
         }
         
         .answer-toggle:hover {
-            color: #764ba2;
+            color: #B0E0E6;
         }
         
                 .detailed-answer {
@@ -204,7 +204,7 @@
         .upload-anim .file-icon {
             position: absolute;
             font-size: 4em;
-            color: #667eea;
+            color: #87CEEB;
             opacity: 1;
             animation: file-to-folder-arc 1.2s cubic-bezier(.4,2,.6,1) forwards;
         }
@@ -235,7 +235,7 @@
         .delete-anim .file-icon {
             position: absolute;
             font-size: 4em;
-            color: #667eea;
+            color: #87CEEB;
             opacity: 1;
             animation: file-from-folder-to-trash-arc 1.2s cubic-bezier(.4,2,.6,1) forwards;
         }
@@ -332,7 +332,7 @@
                     <div class="d-flex flex-column align-items-start" style="min-width:180px;">
                         <!-- Empty space for balance -->
                     </div>
-                    <h2 class="flex-grow-1 mb-0 text-center" style="color:white;"><i class="fas fa-brain"></i> AI Question Answering Assistant</h2>
+                    <h2 class="flex-grow-1 mb-0 text-center" style="color:white;"><i class="fas fa-brain"></i> DP AI Assistant</h2>
                     <div class="text-end" style="min-width:220px;">
                         <div class="mb-1">
                             <span class="status-indicator status-disconnected" id="statusIndicator"></span>
@@ -363,7 +363,7 @@
             </div>
             <style>
             .header {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
                 color: white;
                 padding: 20px 20px 0 20px;
                 border-radius: 20px 20px 0 0;
@@ -384,8 +384,8 @@
             }
             .btn-toggle-chat.active, .btn-toggle-chat:focus {
                 background: #fff;
-                color: #764ba2;
-                box-shadow: 0 4px 12px rgba(102,126,234,0.10);
+                color: #B0E0E6;
+                box-shadow: 0 4px 12px rgba(135,206,235,0.10);
                 z-index: 2;
                 position: relative;
             }
@@ -401,7 +401,7 @@
             <!-- Welcome message above status, left-aligned -->
             <div class="chat-area" id="chatMessages">
                 <div class="message ai-message">
-                    <strong>🤖 AI Assistant:</strong> Welcome! I'm your AI Question Answering Assistant. Please upload compliance documents or ask a question to get started.
+                    <strong>🤖 AI Assistant:</strong> Welcome! I'm your DP AI Assistant. Please upload compliance documents or ask a question to get started.
                 </div>
             </div>
             <div class="chat-area hidden" id="logsArea" style="height: calc(100vh - 200px); overflow-y: auto; position: relative;">
@@ -416,7 +416,7 @@
             </div>
             <!-- Independent Document Management Area -->
             <div class="docs-area hidden" id="docsArea" style="height: calc(100vh - 200px); overflow-y: auto; padding: 20px; background: #f8f9fa;">
-                <div class="message ai-message" style="background: transparent; color: #764ba2; border-left: none; margin-bottom: 0;">
+                <div class="message ai-message" style="background: transparent; color: #B0E0E6; border-left: none; margin-bottom: 0;">
                     <strong>Welcome to the Document Manager.</strong>
                 </div>
                 <div class="d-flex justify-content-between align-items-center" style="margin-bottom: 20px;">
@@ -439,7 +439,7 @@
                         </div>
                     </div>
                     <div class="d-flex gap-2">
-                        <button class="btn btn-success" id="addDocBtn" style="width: 120px;"><i class="fas fa-plus"></i> Add Documents</button>
+                        <button class="btn btn-secondary" id="addDocBtn" style="width: 120px;"><i class="fas fa-plus"></i> Add Documents</button>
                         <button class="btn btn-danger" id="bulkDeleteBtn" style="width: 120px;" disabled><i class="fas fa-trash"></i> Delete Selected</button>
                         <button class="btn btn-warning" id="bulkReplaceBtn" style="width: 120px;" disabled><i class="fas fa-sync-alt"></i> Replace Selected</button>
                         <input type="file" id="addDocInput" class="d-none" multiple accept=".pdf,.docx,.txt,.csv,.xml">
@@ -789,7 +789,11 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
 let aiInitialized = false;
-let uploadPinCache = null;
+        const UPLOAD_PIN = "1964"; // PIN from config_details.py
+        let uploadPinCache = null;
+        let uploadButtonUnlocked = false; // Track if upload button is unlocked
+        let wrongPinAttempts = 0; // Track wrong PIN attempts
+        const MAX_PIN_ATTEMPTS = 3; // Maximum allowed wrong attempts
 let pendingAnimationStop = null;
 
 window.addEventListener('DOMContentLoaded', function() {
@@ -945,7 +949,7 @@ window.addEventListener('DOMContentLoaded', function() {
         if (isAllTopics) {
             addMessage(`🤖 AI Assistant: <b>Welcome!</b> Please <b>select your topic(s)</b> to get started. The chat bar will be enabled once you choose at least one topic.`, 'ai');
         } else {
-            addMessage(`🤖 AI Assistant: Welcome! I'm your AI Question Answering Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai');
+            addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai');
         }
         const history = chatHistories[sessionKey] || [];
         history.forEach(item => {
@@ -954,10 +958,10 @@ window.addEventListener('DOMContentLoaded', function() {
             // Format answer with confidence and sources if available
             let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
             if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
-                answerText += `<br><br><strong>Confidence:</strong> ${item.confidence}%`;
+                answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
             }
             if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
-                answerText += `<br><br><strong>Sources:</strong> ${item.sources}`;
+                answerText += `<br><strong>Sources:</strong> ${item.sources}`;
             }
             addMessage(answerText, 'ai');
         });
@@ -1663,10 +1667,10 @@ document.getElementById('loginSubmitBtn').addEventListener('click', function() {
                         // Format answer with confidence and sources if available
                         let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
                         if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
-                            answerText += `<br><br><strong>Confidence:</strong> ${item.confidence}%`;
+                            answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
                         }
                         if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
-                            answerText += `<br><br><strong>Sources:</strong> ${item.sources}`;
+                            answerText += `<br><strong>Sources:</strong> ${item.sources}`;
                         }
                         addMessage(answerText, 'ai');
                     });
@@ -2091,7 +2095,107 @@ bulkReplaceInput.addEventListener('change', function(e) {
     bulkReplaceInput.value = '';
 });
 
-addDocBtn.addEventListener('click', () => addDocInput.click());
+// Function to disconnect AI and lockout the web instance
+function disconnectAndLockout() {
+    // Disconnect AI
+    aiInitialized = false;
+    
+    // Clear any ongoing operations
+    if (pendingAnimationStop) {
+        clearTimeout(pendingAnimationStop);
+    }
+    
+    // Disable all interactive elements
+    const interactiveElements = document.querySelectorAll('button, input, textarea, select');
+    interactiveElements.forEach(element => {
+        element.disabled = true;
+    });
+    
+    // Show lockout message
+    const chatArea = document.getElementById('chatMessages');
+    if (chatArea) {
+        const lockoutMessage = document.createElement('div');
+        lockoutMessage.className = 'message ai-message';
+        lockoutMessage.innerHTML = '<strong>🔒 SYSTEM LOCKOUT:</strong> Maximum PIN attempts exceeded. This session has been terminated for security reasons.';
+        lockoutMessage.style.backgroundColor = '#dc3545';
+        lockoutMessage.style.color = 'white';
+        lockoutMessage.style.border = '2px solid #c82333';
+        chatArea.appendChild(lockoutMessage);
+    }
+    
+    // Disable the upload button specifically
+    const addDocBtn = document.getElementById('addDocBtn');
+    if (addDocBtn) {
+        addDocBtn.disabled = true;
+        addDocBtn.classList.remove('btn-primary', 'btn-secondary');
+        addDocBtn.classList.add('btn-danger');
+        addDocBtn.innerHTML = '<i class="fas fa-lock"></i> LOCKED';
+    }
+    
+    // Add a visual overlay to indicate lockout
+    const overlay = document.createElement('div');
+    overlay.id = 'lockoutOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(220, 53, 69, 0.1);
+        z-index: 9999;
+        pointer-events: none;
+    `;
+    document.body.appendChild(overlay);
+    
+    // Update connection status to show "Locked Out"
+    const statusIndicator = document.getElementById('statusIndicator');
+    const statusText = document.getElementById('statusText');
+    if (statusIndicator && statusText) {
+        statusIndicator.className = 'status-indicator status-disconnected';
+        statusText.textContent = 'Locked Out';
+        statusText.style.color = '#dc3545';
+        statusText.style.fontWeight = 'bold';
+    }
+    
+    // Log the lockout event
+    addLogMessage('🔒 SYSTEM LOCKOUT: Maximum PIN attempts exceeded. Session terminated.');
+    
+    // Optional: Redirect to a lockout page or show a modal
+    setTimeout(() => {
+        alert('Session terminated due to security violation.');
+    }, 1000);
+}
+
+addDocBtn.addEventListener('click', function() {
+    if (!uploadButtonUnlocked) {
+        // Show pin prompt
+        const pin = prompt('Enter security PIN to upload documents:');
+        if (pin === null) {
+            return; // User cancelled
+        }
+        if (pin === UPLOAD_PIN) {
+            uploadPinCache = pin;
+            uploadButtonUnlocked = true;
+            this.innerHTML = '<i class="fas fa-plus"></i> Add Documents';
+            this.classList.remove('btn-secondary');
+            this.classList.add('btn-primary');
+            alert('PIN verified! Upload button is now unlocked.');
+        } else {
+            wrongPinAttempts++;
+            if (wrongPinAttempts >= MAX_PIN_ATTEMPTS) {
+                alert('Maximum PIN attempts exceeded. System will now disconnect for security.');
+                // Disconnect AI and kill web instance
+                disconnectAndLockout();
+            } else {
+                const remainingAttempts = MAX_PIN_ATTEMPTS - wrongPinAttempts;
+                alert(`Incorrect PIN. Access denied. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining.`);
+            }
+        }
+    } else {
+        // Button is already unlocked, proceed with file selection
+        addDocInput.click();
+    }
+});
 addDocInput.addEventListener('change', (e) => {
     const files = e.target.files;
     if (files.length > 0) {
@@ -2839,7 +2943,7 @@ function showSortOrderPopup(arrow, col, idx) {
     zero.style.padding = '0 4px';
     if (idx === 0) {
         zero.style.fontWeight = 'bold';
-        zero.style.color = '#764ba2';
+        zero.style.color = '#B0E0E6';
     }
     zero.title = 'Make main sorter';
     zero.addEventListener('click', function(e) {
@@ -2863,7 +2967,7 @@ function showSortOrderPopup(arrow, col, idx) {
         num.style.padding = '0 4px';
         if (i - 1 === idx) {
             num.style.fontWeight = 'bold';
-            num.style.color = '#764ba2';
+            num.style.color = '#B0E0E6';
         }
         num.title = `Make sort order ${i}`;
         num.addEventListener('click', function(e) {

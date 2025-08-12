@@ -1,69 +1,35 @@
-# The following are the dependencies for the project with specific versions.
-# Compatible with Python 3.12 and numpy<2
-
+# === Core Web Framework ===
 flask==3.1.1
-PyPDF2==3.0.1
-PyMuPDF==1.26.3
-python-docx==1.2.0
-unstructured==0.18.11
+
+# === Core ML & AI Stack ===
+torch==2.2.2
 transformers==4.53.3
-sentence-transformers==5.0.0
 langchain==0.3.27
 langchain-community==0.3.27
-langchain-huggingface==0.3.1
 langchain-ollama==0.3.6
-torch==2.2.2
-scikit-learn<2.0.0
-scipy<2.0.0
 faiss-cpu==1.11.0.post1
+numpy>=1.26.0  # Updated for Python 3.12 compatibility
+scikit-learn>=1.4.0  # Updated for Python 3.12 compatibility
+scipy>=1.12.0  # Updated for Python 3.12 compatibility
+
+# === Document Processing ===
+PyMuPDF==1.26.3  # Fast PDF processing
+PyPDF2>=3.0.1  # PDF processing - updated version
+pypdf>=3.17.0  # Alternative PDF library (PyPDF2 successor)
+python-docx==1.2.0
+unstructured==0.18.11
+
+# === Database ===
 psycopg2-binary==2.9.10
-scikit-image==0.25.2
-numpy<2.0.0
+
+# === System Utilities ===
 psutil==6.1.0
 
-# Enhanced table extraction dependencies (Python 3.12 + numpy<2 compatible)
-pandas<2.2.0
-tabula-py==2.9.0
-camelot-py[cv]==0.11.0
-opencv-python<4.9.0
-pytesseract==0.3.10
-Pillow<11.0.0
-openpyxl<4.0.0
-
-#  The following is the dependencies for the application with a small explanation.
-
-# # === Web Framework & APIs ===
-# flask==3.1.1
-
-# # === Document & Text Processing ===
-# PyPDF2==3.0.1              # Read and extract text from PDFs
-# PyMuPDF==1.26.3             # Fast text and image extraction from PDFs and other formats
-# python-docx==1.2.0         # Parse and manipulate Word (.docx) documents
-# unstructured==0.18.11        # Parse unstructured documents like PDFs, Word, HTML, etc.
-
-# # === Natural Language Processing & Transformers ===
-# transformers==4.53.3        # Hugging Face transformer models (e.g., BERT, GPT)
-# sentence-transformers==5.0.0  # Generate sentence embeddings for similarity tasks
-# # openai-whisper      # Speech-to-text transcription by OpenAI
-# langchain==0.3.27           # Framework for chaining LLM calls
-# langchain-community==0.3.27 # Community-contributed LangChain integrations
-# langchain-huggingface==0.3.1 # Hugging Face integration for LangChain
-# langchain-ollama==0.3.6    # Ollama (local LLM) integration for LangChain
-
-# # === Machine Learning & Deep Learning ===
-# torch==2.2.2               # PyTorch for deep learning
-# scikit-learn==1.7.1        # Traditional ML algorithms and utilities
-# scipy==1.16.0               # Scientific computing and numerical routines
-# faiss-cpu==1.11.0.post1           # Vector similarity search (CPU version)
-
-# # === Audio Processing ===
-# # pyaudio             # Audio I/O via PortAudio (record/play audio)
-
-# # === Enhanced Table Extraction ===
-# pandas==2.1.4              # Data manipulation and analysis
-# tabula-py==2.9.0           # Extract tables from PDFs
-# camelot-py[cv]==0.11.0     # Advanced PDF table extraction
-# opencv-python==4.8.1.78    # Computer vision for table detection
-# pytesseract==0.3.10        # OCR for text extraction from images
-# Pillow==10.1.0             # Image processing
-# openpyxl==3.1.2            # Excel file processing
+# === Optional: Table Extraction (Heavy - install only if needed) ===
+# pandas==1.5.3  # Uncomment if table extraction needed
+# tabula-py==2.9.0  # Uncomment if table extraction needed
+# camelot-py[cv]==0.11.0  # Uncomment if table extraction needed
+# opencv-python==4.8.1.78  # Uncomment if table extraction needed
+# pytesseract==0.3.10  # Uncomment if table extraction needed
+# Pillow==10.1.0  # Uncomment if Excel processing needed
+# openpyxl==3.1.2  # Uncomment if Excel processing needed
