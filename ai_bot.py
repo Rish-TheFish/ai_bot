@@ -2,7 +2,7 @@ import os, csv, shutil, re
 from datetime import datetime
 import time  # Add timing import
 from Logistics_Files import *
-from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, PASSWORD
+from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, POSTGRES_PASSWORD
 # UPLOAD_PIN commented out for now
 from Logistics_Files.backend_log import add_backend_log, backend_logs
 import pickle
@@ -566,22 +566,13 @@ class AIApp:
             all_docs = all_docs[:max_docs]
             logging.info(f"[DEBUG] Limited to {len(all_docs)} documents")
         
-        # Enhanced chunking strategy with optimal parameters for compliance documents
+        # Smart, bounded dynamic chunking for FAQ bot quality
         logging.info("[DEBUG] Starting document chunking...")
         
-        # Tighter chunking for more precise retrieval
-        if any(doc.metadata.get('source', '').endswith('.pdf') for doc in all_docs):
-            # PDFs often have structured content - use much smaller chunks
-            chunk_size = 80
-            chunk_overlap = 40
-        elif any(doc.metadata.get('source', '').endswith('.docx') for doc in all_docs):
-            # Word docs can be chunked more granularly
-            chunk_size = 100
-            chunk_overlap = 45
-        else:
-            # Default for other document types
-            chunk_size = 120
-            chunk_overlap = 50
+        # Calculate optimal chunk size based on available resources
+        chunk_size, chunk_overlap = self.calculate_optimal_chunk_parameters()
+        
+        logging.info(f"[DEBUG] Calculated optimal chunk size: {chunk_size}, overlap: {chunk_overlap}")
         
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
@@ -1027,7 +1018,7 @@ Please provide a structured summary:"""
 
     def get_doc_topic_map(self) -> dict:
         """Return a mapping: filename -> set of topic_ids."""
-        DATABASE_URL = f'postgresql://postgres:{PASSWORD}@localhost:5432/chat_history'
+        DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_history'
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute('''
@@ -1749,6 +1740,24 @@ Provide ONLY the short summary answer:"""
             filename = os.path.basename(file_path)
             ext = os.path.splitext(file_path)[1].lower()
             
+            # Check if document already exists in database to prevent duplicates
+            if self.db:
+                try:
+                    # Get a sample of existing documents to check for duplicates
+                    sample_docs = self.db.similarity_search("", k=1000)
+                    existing_sources = set()
+                    for doc in sample_docs:
+                        source = doc.metadata.get('source', '')
+                        if source:
+                            existing_sources.add(os.path.basename(source))
+                    
+                    if filename in existing_sources:
+                        logging.warning(f"[DEBUG] Document {filename} already exists in database, skipping incremental add")
+                        return True  # Already exists, consider it successful
+                        
+                except Exception as e:
+                    logging.warning(f"[DEBUG] Could not check for duplicates: {e}, proceeding with add")
+            
             docs = []
             if ext == ".pdf":
                 try:
@@ -1777,10 +1786,12 @@ Provide ONLY the short summary answer:"""
                 logging.warning(f"No documents loaded from {filename}")
                 return False
             
-            # Chunk the document with tighter granularity for precise retrieval
+            # Use smart chunking for consistent quality
+            chunk_size, chunk_overlap = self.calculate_optimal_chunk_parameters()
+            
             splitter = RecursiveCharacterTextSplitter(
-                chunk_size=90,   # Much smaller chunks for precise retrieval
-                chunk_overlap=45, # Maintain context between chunks
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
                 length_function=len,  # Use character count for consistent sizing
                 separators=[
                     "\n\n\n",    # Major section breaks
@@ -1809,7 +1820,10 @@ Provide ONLY the short summary answer:"""
                 # Save the updated database
                 self.db.save_local(DB_PATH)
                 
-
+                # Validate integrity after adding to prevent stale data
+                integrity_result = self.validate_vector_db_integrity()
+                if integrity_result.get('status') == 'rebuilt':
+                    logging.warning(f"[DEBUG] Vector database rebuilt after adding {filename} due to integrity issues")
                 
                 logging.info(f"[DEBUG] Successfully added {filename} to database")
                 return True
@@ -1851,6 +1865,99 @@ Provide ONLY the short summary answer:"""
         except Exception as e:
             logging.error(f"Error deleting document: {e}")
             return False
+
+    def remove_document_from_vector_db(self, filename: str) -> bool:
+        """Remove a specific document from the vector database incrementally."""
+        try:
+            logging.info(f"[DEBUG] Removing document from vector database: {filename}")
+            
+            if not self.db:
+                logging.warning("[DEBUG] No vector database to remove document from")
+                return False
+            
+            # Get list of all files except the one to delete
+            remaining_files = []
+            for root, _, files in os.walk(DOCS_PATH):
+                for file in files:
+                    if file != filename:
+                        remaining_files.append(os.path.join(root, file))
+            
+            if not remaining_files:
+                # No files left, clear the database
+                self.db = None
+                logging.info(f"[DEBUG] No files left, cleared vector database")
+                return True
+            
+            # Rebuild database with remaining files (more efficient than trying to remove specific chunks)
+            logging.info(f"[DEBUG] Rebuilding vector database with {len(remaining_files)} remaining files")
+            self.build_db("incremental_delete")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error removing document from vector database: {e}")
+            return False
+
+    def calculate_optimal_chunk_parameters(self) -> tuple:
+        """Calculate optimal chunk size and overlap based on available resources for FAQ bot quality."""
+        try:
+            # Get current system resources
+            memory = psutil.virtual_memory()
+            available_ram_gb = memory.available / (1024**3)
+            total_ram_gb = memory.total / (1024**3)
+            memory_pressure = memory.percent
+            
+            cpu_cores = psutil.cpu_count(logical=True)
+            
+            # Base chunk size calculation based on available resources
+            if available_ram_gb > 16:
+                base_chunk_size = 256
+            elif available_ram_gb > 8:
+                base_chunk_size = 192
+            elif available_ram_gb > 4:
+                base_chunk_size = 128
+            else:
+                base_chunk_size = 96
+            
+            # Adjust based on memory pressure
+            if memory_pressure > 80:
+                base_chunk_size = int(base_chunk_size * 0.7)  # Reduce by 30% under pressure
+            elif memory_pressure > 60:
+                base_chunk_size = int(base_chunk_size * 0.85)  # Reduce by 15% under moderate pressure
+            
+            # Adjust based on CPU cores (more cores = can handle larger chunks)
+            if cpu_cores > 8:
+                base_chunk_size = int(base_chunk_size * 1.2)  # Increase by 20%
+            elif cpu_cores > 4:
+                base_chunk_size = int(base_chunk_size * 1.1)  # Increase by 10%
+            
+            # FAQ Bot Quality Bounds - ensure chunks are optimal for Q&A
+            MIN_CHUNK_SIZE = 128    # Minimum for meaningful context in Q&A
+            MAX_CHUNK_SIZE = 512    # Maximum for FAQ efficiency
+            
+            # Apply quality bounds
+            optimal_chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, base_chunk_size))
+            
+            # Calculate optimal overlap (25-30% for good continuity in Q&A)
+            overlap_ratio = 0.28  # 28% overlap for FAQ bots
+            optimal_overlap = max(32, int(optimal_chunk_size * overlap_ratio))
+            
+            # Ensure overlap doesn't exceed chunk size
+            optimal_overlap = min(optimal_overlap, optimal_chunk_size - 32)
+            
+            logging.info(f"[DEBUG] Chunking calculation:")
+            logging.info(f"[DEBUG]   - Available RAM: {available_ram_gb:.2f} GB")
+            logging.info(f"[DEBUG]   - Memory pressure: {memory_pressure:.1f}%")
+            logging.info(f"[DEBUG]   - CPU cores: {cpu_cores}")
+            logging.info(f"[DEBUG]   - Base chunk size: {base_chunk_size}")
+            logging.info(f"[DEBUG]   - Final chunk size: {optimal_chunk_size}")
+            logging.info(f"[DEBUG]   - Final overlap: {optimal_overlap}")
+            
+            return optimal_chunk_size, optimal_overlap
+            
+        except Exception as e:
+            logging.warning(f"[DEBUG] Error calculating chunk parameters: {e}, using defaults")
+            # Fallback to good FAQ bot defaults
+            return 192, 54  # 192 chars with 54 overlap (28%)
 
     def replace_document_incremental(self, old_filename: str, new_file_path: str) -> bool:
         """Replace a document in the database."""
@@ -2384,3 +2491,79 @@ Respond with ONLY a number between 0 and 100."""
         except Exception as e:
             logging.error(f"[DEBUG] Failed to initialize confidence models: {e}")
             self.confidence_model = None
+
+    def validate_vector_db_integrity(self) -> dict:
+        """Validate that vector database matches actual files on disk and clean any stale data."""
+        try:
+            logging.info("[DEBUG] Starting vector database integrity validation...")
+            
+            if not self.db:
+                logging.info("[DEBUG] No vector database to validate")
+                return {'status': 'no_db', 'message': 'No vector database exists'}
+            
+            # Get all files currently on disk
+            disk_files = set()
+            for root, _, files in os.walk(DOCS_PATH):
+                for file in files:
+                    disk_files.add(file)
+            
+            logging.info(f"[DEBUG] Found {len(disk_files)} files on disk")
+            
+            # Get all sources from vector database
+            try:
+                # Get a sample of documents to check sources
+                sample_docs = self.db.similarity_search("", k=1000)  # Get up to 1000 docs
+                db_sources = set()
+                for doc in sample_docs:
+                    source = doc.metadata.get('source', '')
+                    if source:
+                        # Extract filename from full path
+                        filename = os.path.basename(source)
+                        db_sources.add(filename)
+                
+                logging.info(f"[DEBUG] Vector database contains {len(db_sources)} unique document sources")
+                
+                # Find stale data (files in DB but not on disk)
+                stale_sources = db_sources - disk_files
+                missing_sources = disk_files - db_sources
+                
+                if stale_sources:
+                    logging.warning(f"[DEBUG] Found {len(stale_sources)} stale sources in vector database: {stale_sources}")
+                else:
+                    logging.info("[DEBUG] No stale sources found in vector database")
+                
+                if missing_sources:
+                    logging.warning(f"[DEBUG] Found {len(missing_sources)} files on disk not in vector database: {missing_sources}")
+                else:
+                    logging.info("[DEBUG] All disk files are represented in vector database")
+                
+                # If there are discrepancies, rebuild the database
+                if stale_sources or missing_sources:
+                    logging.info("[DEBUG] Vector database integrity compromised, rebuilding...")
+                    self.build_db("integrity_rebuild")
+                    return {
+                        'status': 'rebuilt',
+                        'message': 'Vector database rebuilt due to integrity issues',
+                        'stale_sources': len(stale_sources),
+                        'missing_sources': len(missing_sources)
+                    }
+                else:
+                    logging.info("[DEBUG] Vector database integrity validated successfully")
+                    return {
+                        'status': 'valid',
+                        'message': 'Vector database integrity confirmed',
+                        'total_sources': len(db_sources)
+                    }
+                    
+            except Exception as e:
+                logging.error(f"[DEBUG] Error validating vector database: {e}")
+                logging.info("[DEBUG] Rebuilding database due to validation error...")
+                self.build_db("validation_error_rebuild")
+                return {
+                    'status': 'error_rebuilt',
+                    'message': f'Database rebuilt due to validation error: {str(e)}'
+                }
+                
+        except Exception as e:
+            logging.error(f"Error in vector database integrity validation: {e}")
+            return {'status': 'error', 'message': str(e)}

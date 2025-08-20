@@ -1,20 +1,18 @@
-version: '3.8'
-
 services:
   faq-bot:
     build:
-      context: .
+      context: ..  # Build from parent directory to access all files
       dockerfile: Docker_Container_Files/Dockerfile
+    image: dp-ai-assistant:latest  # Name the image dp-ai-assistant
     container_name: faq-bot
     restart: unless-stopped
     ports:
-      - "5000:5000"
-      - "11434:11434"  # Ollama API port
+      - "5000:5000"   # Flask web application only
     volumes:
       # Mount host directories for persistent data
-      - ./your_docs:/app/your_docs
-      - ./your_db:/app/your_db
-      - ./uploads:/app/uploads
+      - ../your_docs:/app/your_docs
+      - ../your_db:/app/your_db
+      - ../uploads:/app/uploads
       - postgres_data:/var/lib/postgresql/data
       - ollama_data:/root/.ollama
     environment:

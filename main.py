@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify, session, send_file
 import os
 from ai_bot import AIApp
-from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, PASSWORD
+from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, POSTGRES_PASSWORD
 # UPLOAD_PIN commented out for now
 from Logistics_Files.backend_log import add_backend_log, backend_logs
 import io
@@ -40,6 +40,7 @@ from werkzeug.utils import secure_filename
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
 
 # Centralized allowed file extensions
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.csv', '.xml', '.xlsx'}
@@ -63,9 +64,7 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
 
 # Database setup - PostgreSQL
-DATABASE_URL = f'postgresql://postgres:{PASSWORD}@localhost:5432/chat_history'
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable must be set")
+DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_history'
 
 # Use environment variable for upload PIN
 # UPLOAD_PIN = os.getenv('UPLOAD_PIN', '1964')  # Commented out for now
@@ -651,16 +650,34 @@ def get_document_status():
     if not ai_app:
         return jsonify({'error': 'AI Assistant not available'})
     
+    # Force refresh AI app state if documents exist but database isn't loaded
+    docs_exist = os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH))
+    if docs_exist and not ai_app.db:
+        add_backend_log("Documents exist but vector database not loaded - forcing refresh")
+        try:
+            if ai_app.database_exists_and_valid():
+                ai_app.load_vector_db()
+                ai_app_ready = True
+                add_backend_log("Vector database loaded successfully")
+            else:
+                ai_app.build_db("force_refresh")
+                ai_app_ready = True
+                add_backend_log("Vector database rebuilt successfully")
+        except Exception as e:
+            add_backend_log(f"Error refreshing vector database: {e}")
+    
     try:
         result = ai_app.get_document_status()
         result['ready'] = True
+        result['database_loaded'] = ai_app.db is not None
         return jsonify(result)
     except Exception as e:
         return jsonify({
             'status': 'ready_with_warning',
             'message': f'AI Assistant ready (with warning: {str(e)})',
             'ready': True,
-            'warning': str(e)
+            'warning': str(e),
+            'database_loaded': ai_app.db is not None if ai_app else False
         })
 
 @app.route('/ask', methods=['POST'])
@@ -1315,21 +1332,40 @@ def upload_document():
         conn.commit()
         conn.close()
         
-        # Use incremental update instead of full rebuild
-        global ai_app
-        if ai_app and ai_app.db:
-            # Database exists, use incremental update
-            if ai_app.add_document_incremental(file_path):
-                add_backend_log(f"Document uploaded incrementally: {file.filename}")
+        # Update AI app with new document
+        global ai_app, ai_app_ready
+        try:
+            if ai_app and ai_app.db:
+                # Database exists, use incremental update
+                if ai_app.add_document_incremental(file_path):
+                    add_backend_log(f"Document uploaded incrementally: {file.filename}")
+                else:
+                    # Fallback to full rebuild if incremental fails
+                    add_backend_log(f"Incremental update failed, rebuilding database: {file.filename}")
+                    ai_app.build_db("incremental_update")
+                    add_backend_log(f"Document uploaded with fallback rebuild: {file.filename}")
             else:
-                # Fallback to full rebuild if incremental fails
-                ai_app.build_db("incremental_update")
-                add_backend_log(f"Document uploaded with fallback rebuild: {file.filename}")
-        else:
-            # No database exists, do initial build
-            ai_app = AIApp(None)
-            ai_app.build_db("initial_build")
-            add_backend_log(f"Document uploaded with initial build: {file.filename}")
+                # No database exists, do initial build
+                add_backend_log(f"Building initial database for: {file.filename}")
+                ai_app = AIApp(None)
+                ai_app.build_db("initial_build")
+                add_backend_log(f"Document uploaded with initial build: {file.filename}")
+            
+            # Ensure AI app is ready after document addition
+            ai_app_ready = True
+            add_backend_log(f"AI app ready after document upload: {file.filename}")
+            
+        except Exception as e:
+            add_backend_log(f"Error updating AI app: {e}")
+            # Force rebuild as fallback
+            try:
+                ai_app = AIApp(None)
+                ai_app.build_db("force_rebuild")
+                ai_app_ready = True
+                add_backend_log(f"AI app rebuilt after error: {file.filename}")
+            except Exception as rebuild_error:
+                add_backend_log(f"Failed to rebuild AI app: {rebuild_error}")
+                ai_app_ready = False
         
         return jsonify({'status': 'success', 'message': f'Document {file.filename} uploaded successfully'})
     except Exception as e:
@@ -1440,10 +1476,47 @@ def replace_document():
         conn.commit()
         conn.close()
         
-        # Always reinitialize AI with updated documents
-        global ai_app
-        ai_app = AIApp(None)
-        ai_app.build_db()
+        # Clean up vector database and rebuild with new document
+        global ai_app, ai_app_ready
+        try:
+            if ai_app and ai_app.db:
+                # Remove old document from vector database first
+                if hasattr(ai_app, 'remove_document_from_vector_db'):
+                    if ai_app.remove_document_from_vector_db(old_filename):
+                        add_backend_log(f"Old document {old_filename} removed from vector database")
+                    else:
+                        add_backend_log(f"Failed to remove old document from vector database, rebuilding")
+                        ai_app.build_db("replace_rebuild")
+                else:
+                    # No incremental method, rebuild
+                    ai_app.build_db("replace_rebuild")
+                
+                # Add new document incrementally
+                if ai_app.add_document_incremental(new_file_path):
+                    add_backend_log(f"New document {file.filename} added to vector database")
+                else:
+                    add_backend_log(f"Failed to add new document incrementally, rebuilding database")
+                    ai_app.build_db("replace_fallback_rebuild")
+                
+                ai_app_ready = True
+            else:
+                # No AI app, create new one
+                ai_app = AIApp(None)
+                ai_app.build_db("replace_initial_build")
+                ai_app_ready = True
+            
+            add_backend_log(f"Vector database updated after replacing {old_filename} with {file.filename}")
+        except Exception as e:
+            add_backend_log(f"Error updating vector database: {e}")
+            # Force rebuild as fallback
+            try:
+                ai_app = AIApp(None)
+                ai_app.build_db("replace_error_rebuild")
+                ai_app_ready = True
+                add_backend_log(f"Vector database rebuilt after error")
+            except Exception as rebuild_error:
+                add_backend_log(f"Failed to rebuild vector database: {rebuild_error}")
+                ai_app_ready = False
         
         add_backend_log(f"Document replaced: {old_filename} with {file.filename}")
         return jsonify({'status': 'success', 'message': f'Document {old_filename} replaced with {file.filename}'})
@@ -1459,26 +1532,92 @@ def delete_document():
         filename = data.get('filename')
         if not filename:
             return jsonify({'error': 'Filename is required'})
+        
         file_path = os.path.join('your_docs', filename)
+        
         # Delete the file from the filesystem if it exists
         if os.path.exists(file_path):
             os.remove(file_path)
+            add_backend_log(f"File deleted from filesystem: {filename}")
         else:
             add_backend_log(f"File not found on disk: {file_path}")
-        # Delete from the database
+        
+        # Delete from the database with proper cleanup
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM documents WHERE filename = %s', (filename,))
-        conn.commit()
+        
+        # First, get the document ID for cleanup
+        cursor.execute('SELECT id FROM documents WHERE filename = %s', (filename,))
+        result = cursor.fetchone()
+        
+        if result:
+            document_id = result[0]
+            
+            # Clean up document-topic relationships first (CASCADE should handle this, but being explicit)
+            cursor.execute('DELETE FROM document_topics WHERE document_id = %s', (document_id,))
+            add_backend_log(f"Cleaned up {cursor.rowcount} topic relationships for {filename}")
+            
+            # Delete the document record
+            cursor.execute('DELETE FROM documents WHERE id = %s', (document_id,))
+            add_backend_log(f"Document record deleted from database: {filename}")
+            
+            # Check for orphaned topics (topics with no documents)
+            cursor.execute('''
+                DELETE FROM topics t 
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM document_topics dt WHERE dt.topic_id = t.id
+                )
+            ''')
+            orphaned_topics_count = cursor.rowcount
+            if orphaned_topics_count > 0:
+                add_backend_log(f"Cleaned up {orphaned_topics_count} orphaned topics")
+            
+            conn.commit()
+            add_backend_log(f"Database cleanup completed for {filename}")
+        else:
+            add_backend_log(f"Document {filename} not found in database")
+        
         conn.close()
-        # Always reinitialize AI with updated documents
-        global ai_app
-        ai_app = AIApp(None)
-        ai_app.build_db()
-        add_backend_log(f"Document deleted: {filename}")
+        
+        # Clean up vector database and rebuild
+        global ai_app, ai_app_ready
+        try:
+            if ai_app and ai_app.db:
+                # Try incremental cleanup first
+                if hasattr(ai_app, 'remove_document_from_vector_db'):
+                    if ai_app.remove_document_from_vector_db(filename):
+                        add_backend_log(f"Document {filename} removed from vector database incrementally")
+                    else:
+                        # Fallback to full rebuild
+                        add_backend_log(f"Incremental vector cleanup failed, rebuilding database for {filename}")
+                        ai_app.build_db("delete_rebuild")
+                else:
+                    # No incremental method, rebuild
+                    ai_app.build_db("delete_rebuild")
+                ai_app_ready = True
+            else:
+                # No AI app, create new one
+                ai_app = AIApp(None)
+                ai_app.build_db("delete_rebuild")
+                ai_app_ready = True
+            
+            add_backend_log(f"Vector database updated after deleting {filename}")
+        except Exception as e:
+            add_backend_log(f"Error updating vector database: {e}")
+            # Force rebuild as fallback
+            try:
+                ai_app = AIApp(None)
+                ai_app.build_db("delete_rebuild_fallback")
+                ai_app_ready = True
+                add_backend_log(f"Vector database rebuilt after error")
+            except Exception as rebuild_error:
+                add_backend_log(f"Failed to rebuild vector database: {rebuild_error}")
+                ai_app_ready = False
+        
+        add_backend_log(f"Document {filename} completely deleted and cleaned up")
         return jsonify({'status': 'success', 'message': f'Document {filename} deleted successfully'})
     except Exception as e:
-        add_backend_log(f"Error message: {e}")
+        add_backend_log(f"Error deleting document {filename}: {e}")
         return jsonify({'error': str(e)})
 
 @app.route('/bulk_delete_documents', methods=['POST'])
@@ -1550,12 +1689,33 @@ def delete_single_document(filename):
         # Delete from filesystem
         if os.path.exists(file_path):
             os.remove(file_path)
+            add_backend_log(f"File deleted from filesystem: {filename}")
         
-        # Delete from database
+        # Delete from database with proper cleanup
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('DELETE FROM documents WHERE filename = %s', (filename,))
-        conn.commit()
+        
+        # First, get the document ID for cleanup
+        cursor.execute('SELECT id FROM documents WHERE filename = %s', (filename,))
+        result = cursor.fetchone()
+        
+        if result:
+            document_id = result[0]
+            
+            # Clean up document-topic relationships first
+            cursor.execute('DELETE FROM document_topics WHERE document_id = %s', (document_id,))
+            topic_relationships_cleaned = cursor.rowcount
+            add_backend_log(f"Cleaned up {topic_relationships_cleaned} topic relationships for {filename}")
+            
+            # Delete the document record
+            cursor.execute('DELETE FROM documents WHERE id = %s', (document_id,))
+            add_backend_log(f"Document record deleted from database: {filename}")
+            
+            conn.commit()
+            add_backend_log(f"Database cleanup completed for {filename}")
+        else:
+            add_backend_log(f"Document {filename} not found in database")
+        
         conn.close()
         
         add_backend_log(f"Successfully deleted: {filename}")
@@ -1623,17 +1783,32 @@ def bulk_upload_documents():
                 global ai_app, ai_app_ready
                 if ai_app and ai_app.db:
                     # Use incremental update for existing database
+                    add_backend_log(f"Updating existing database with {len(successful_uploads)} documents")
                     for result in successful_uploads:
                         file_path = os.path.join('your_docs', result['filename'])
-                        ai_app.add_document_incremental(file_path)
+                        if not ai_app.add_document_incremental(file_path):
+                            add_backend_log(f"Incremental update failed for {result['filename']}, falling back to rebuild")
+                            ai_app.build_db("bulk_upload_rebuild")
+                            break
                 else:
                     # Do initial build for new database
+                    add_backend_log(f"Building new database for {len(successful_uploads)} documents")
                     ai_app = AIApp(None)
                     ai_app.build_db("bulk_upload_build")
+                
                 ai_app_ready = True
                 add_backend_log(f"Database updated after bulk upload of {len(successful_uploads)} documents")
             except Exception as e:
                 add_backend_log(f"Error updating database after bulk upload: {e}")
+                # Force rebuild as fallback
+                try:
+                    ai_app = AIApp(None)
+                    ai_app.build_db("bulk_upload_fallback")
+                    ai_app_ready = True
+                    add_backend_log(f"Database rebuilt after bulk upload error")
+                except Exception as rebuild_error:
+                    add_backend_log(f"Failed to rebuild database after bulk upload: {rebuild_error}")
+                    ai_app_ready = False
         
         return jsonify({
             'status': 'success',
@@ -1903,6 +2078,122 @@ def clear_backend_logs():
     backend_logs.clear()
     return jsonify({'status': 'success', 'message': 'Backend logs cleared.'})
 
+@app.route('/cleanup_orphaned_data', methods=['POST'])
+def cleanup_orphaned_data():
+    """Clean up orphaned data in the database"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Clean up orphaned topics (topics with no documents)
+        cursor.execute('''
+            DELETE FROM topics t 
+            WHERE NOT EXISTS (
+                SELECT 1 FROM document_topics dt WHERE dt.topic_id = t.id
+            )
+        ''')
+        orphaned_topics_count = cursor.rowcount
+        
+        # Clean up orphaned document-topic relationships (documents that no longer exist)
+        cursor.execute('''
+            DELETE FROM document_topics dt 
+            WHERE NOT EXISTS (
+                SELECT 1 FROM documents d WHERE d.id = dt.document_id
+            )
+        ''')
+        orphaned_relationships_count = cursor.rowcount
+        
+        # Clean up orphaned document records (files that no longer exist on disk)
+        orphaned_documents_count = 0
+        cursor.execute('SELECT id, filename FROM documents')
+        documents = cursor.fetchall()
+        
+        for doc_id, filename in documents:
+            file_path = os.path.join('your_docs', filename)
+            if not os.path.exists(file_path):
+                cursor.execute('DELETE FROM documents WHERE id = %s', (doc_id,))
+                orphaned_documents_count += 1
+                add_backend_log(f"Removed orphaned document record: {filename}")
+        
+        conn.commit()
+        conn.close()
+        
+        add_backend_log(f"Cleanup completed: {orphaned_topics_count} orphaned topics, {orphaned_relationships_count} orphaned relationships, {orphaned_documents_count} orphaned documents")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Orphaned data cleanup completed',
+            'orphaned_topics': orphaned_topics_count,
+            'orphaned_relationships': orphaned_relationships_count,
+            'orphaned_documents': orphaned_documents_count
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error during orphaned data cleanup: {e}")
+        return jsonify({'error': str(e)})
+
+@app.route('/cleanup_ghost_documents', methods=['POST'])
+def cleanup_ghost_documents():
+    """Comprehensive cleanup of ghost documents and rebuild vector database"""
+    try:
+        add_backend_log("Starting comprehensive ghost document cleanup...")
+        
+        # Step 1: Clean up orphaned data
+        try:
+            cleanup_result = cleanup_orphaned_data()
+            if isinstance(cleanup_result, dict) and cleanup_result.get('status') == 'success':
+                add_backend_log("Orphaned data cleanup completed successfully")
+            else:
+                add_backend_log("Orphaned data cleanup failed")
+        except Exception as cleanup_error:
+            add_backend_log(f"Error during orphaned data cleanup: {cleanup_error}")
+            # Continue with vector database rebuild even if cleanup fails
+        
+        # Step 2: Force rebuild of vector database
+        global ai_app, ai_app_ready
+        try:
+            add_backend_log("Rebuilding vector database after cleanup...")
+            ai_app = AIApp(None)
+            ai_app.build_db("ghost_cleanup_rebuild")
+            ai_app_ready = True
+            add_backend_log("Vector database rebuilt successfully after ghost cleanup")
+        except Exception as e:
+            add_backend_log(f"Error rebuilding vector database: {e}")
+            ai_app_ready = False
+            return jsonify({'error': f'Failed to rebuild vector database: {str(e)}'})
+        
+        # Step 3: Verify cleanup
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Count remaining documents
+        cursor.execute('SELECT COUNT(*) FROM documents')
+        remaining_docs = cursor.fetchone()[0]
+        
+        # Count remaining topics
+        cursor.execute('SELECT COUNT(*) FROM topics')
+        remaining_topics = cursor.fetchone()[0]
+        
+        # Count remaining relationships
+        cursor.execute('SELECT COUNT(*) FROM document_topics')
+        remaining_relationships = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        add_backend_log(f"Ghost cleanup completed. Remaining: {remaining_docs} docs, {remaining_topics} topics, {remaining_relationships} relationships")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Ghost document cleanup completed successfully',
+            'remaining_documents': remaining_docs,
+            'remaining_topics': remaining_topics,
+            'remaining_relationships': remaining_relationships
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error during ghost document cleanup: {e}")
+        return jsonify({'error': str(e)})
+
 @app.route('/test_has_documents', methods=['GET'])
 def test_has_documents():
     """Test endpoint to check if documents exist"""
@@ -1969,6 +2260,132 @@ def has_documents_for_topics():
         add_backend_log(f"Error checking documents for topics: {e}")
         return jsonify({'has_documents': False, 'error': str(e)})
 
+@app.route('/validate_vector_db', methods=['POST'])
+def validate_vector_db():
+    """Validate vector database integrity and clean any stale data."""
+    try:
+        global ai_app, ai_app_ready
+        
+        if not ai_app:
+            ai_app = AIApp(None)
+        
+        add_backend_log("Starting vector database integrity validation...")
+        
+        # Validate the vector database
+        validation_result = ai_app.validate_vector_db_integrity()
+        
+        if validation_result.get('status') == 'rebuilt':
+            add_backend_log(f"Vector database rebuilt: {validation_result.get('message')}")
+            ai_app_ready = True
+        elif validation_result.get('status') == 'valid':
+            add_backend_log(f"Vector database integrity confirmed: {validation_result.get('message')}")
+        else:
+            add_backend_log(f"Vector database validation issue: {validation_result.get('message')}")
+        
+        return jsonify({
+            'status': 'success',
+            'validation_result': validation_result
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error validating vector database: {e}")
+        return jsonify({'error': str(e)})
+
+@app.route('/vector_db_health', methods=['GET'])
+def vector_db_health():
+    """Get comprehensive health status of the vector database."""
+    try:
+        global ai_app, ai_app_ready
+        
+        if not ai_app:
+            ai_app = AIApp(None)
+        
+        health_status = {
+            'ai_app_ready': ai_app_ready,
+            'vector_db_exists': ai_app.db is not None,
+            'disk_files': [],
+            'db_sources': [],
+            'integrity_status': 'unknown',
+            'total_chunks': 0,
+            'memory_usage': {},
+            'last_operation': 'none'
+        }
+        
+        # Get disk files
+        try:
+            for root, _, files in os.walk('your_docs'):
+                for file in files:
+                    health_status['disk_files'].append(file)
+        except Exception as e:
+            health_status['disk_files_error'] = str(e)
+        
+        # Get vector database sources if it exists
+        if ai_app.db:
+            try:
+                # Get a sample of documents to analyze
+                sample_docs = ai_app.db.similarity_search("", k=1000)
+                health_status['total_chunks'] = len(sample_docs)
+                
+                # Extract unique sources
+                sources = set()
+                for doc in sample_docs:
+                    source = doc.metadata.get('source', '')
+                    if source:
+                        sources.add(os.path.basename(source))
+                health_status['db_sources'] = list(sources)
+                
+                # Check for discrepancies
+                disk_files_set = set(health_status['disk_files'])
+                db_sources_set = set(health_status['db_sources'])
+                
+                stale_sources = db_sources_set - disk_files_set
+                missing_sources = disk_files_set - db_sources_set
+                
+                if stale_sources or missing_sources:
+                    health_status['integrity_status'] = 'compromised'
+                    health_status['stale_sources'] = list(stale_sources)
+                    health_status['missing_sources'] = list(missing_sources)
+                else:
+                    health_status['integrity_status'] = 'healthy'
+                    
+            except Exception as e:
+                health_status['db_analysis_error'] = str(e)
+                health_status['integrity_status'] = 'error'
+        else:
+            health_status['integrity_status'] = 'no_database'
+        
+        # Get memory usage information
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            health_status['memory_usage'] = {
+                'total_gb': round(memory.total / (1024**3), 2),
+                'available_gb': round(memory.available / (1024**3), 2),
+                'used_gb': round(memory.used / (1024**3), 2),
+                'percent': memory.percent
+            }
+        except Exception as e:
+            health_status['memory_error'] = str(e)
+        
+        # Get last operation from in-memory logs
+        try:
+            if backend_logs:
+                last_log = backend_logs[-1]
+                health_status['last_operation'] = f"{last_log}"
+            else:
+                health_status['last_operation'] = "No operations logged yet"
+        except Exception as e:
+            health_status['log_error'] = str(e)
+        
+        return jsonify({
+            'status': 'success',
+            'health': health_status
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error getting vector database health: {e}")
+        return jsonify({'error': str(e)})
+
 if __name__ == '__main__':
     print('Flask app starting...')
     
@@ -1980,14 +2397,47 @@ if __name__ == '__main__':
         print(f"Error initializing database: {e}")
     
     import socket
-    host = '0.0.0.0'  # Allow external connections in container
+    import os
+    
+    # Auto-detect environment and set appropriate host
     port = 5000
+    host = None  # Initialize host variable
+    
+    # Check if running in containerized environment (Docker/K8s) or production
+    if (os.path.exists('/.dockerenv') or 
+        os.environ.get('DOCKER_CONTAINER') or 
+        os.environ.get('KUBERNETES_SERVICE_HOST') or
+        os.environ.get('FLASK_ENV') == 'production'):
+        host = '0.0.0.0'
+        print("🐳 Running in containerized environment - allowing external access")
+    else:
+        host = '127.0.0.1'
+        print("💻 Running locally - localhost only")
+    
     print(f' * Running on http://{host}:{port}')
+    
+    # Get network information
     try:
         hostname = socket.gethostname()
         local_ip = socket.gethostbyname(hostname)
-        if local_ip != host:
-            print(f' * Running on http://{local_ip}:{port}')
+        
+        if host == '0.0.0.0':
+            # Show consolidated access information
+            print(f' * Container accessible on all interfaces')
+            print(f' * Local network access: http://{local_ip}:{port}')
+            
+            # Show public IP for GCP reference only
+            try:
+                public_ip = requests.get('https://ifconfig.me', timeout=3).text
+                print(f' * Public IP (GCP reference): {public_ip}')
+            except:
+                print(f' * Public IP: Could not determine')
+        else:
+            # Local development
+            if local_ip != host:
+                print(f' * Also available at http://{local_ip}:{port}')
+                
     except Exception as e:
-        print(f' * Could not determine local IP: {e}')
+        print(f' * Could not determine network details: {e}')
+    
     app.run(host=host, port=port, debug=False)  # Disable debug in production

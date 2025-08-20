@@ -1,35 +1,444 @@
 # === Core Web Framework ===
-flask==3.1.1
+flask==3.1.1  # Web application framework
+werkzeug>=3.0.0  # WSGI utilities and security functions
 
 # === Core ML & AI Stack ===
-torch==2.2.2
-transformers==4.53.3
-langchain==0.3.27
-langchain-community==0.3.27
-langchain-ollama==0.3.6
-faiss-cpu==1.11.0.post1
-numpy>=1.26.0  # Updated for Python 3.12 compatibility
-scikit-learn>=1.4.0  # Updated for Python 3.12 compatibility
-scipy>=1.12.0  # Updated for Python 3.12 compatibility
+langchain==0.3.27  # AI application framework
+langchain-community==0.3.27  # Community integrations for LangChain
+langchain-ollama==0.3.6  # Ollama LLM integration
+langchain-core>=0.3.72  # Core LangChain components (compatible with langchain 0.3.27)
+faiss-cpu==1.11.0.post1  # Vector similarity search (CPU)
 
 # === Document Processing ===
-PyMuPDF==1.26.3  # Fast PDF processing
-PyPDF2>=3.0.1  # PDF processing - updated version
-pypdf>=3.17.0  # Alternative PDF library (PyPDF2 successor)
-python-docx==1.2.0
-unstructured==0.18.11
+PyMuPDF==1.26.3  # Fast PDF processing library
+PyPDF2>=3.0.1  # PDF text extraction and manipulation
+pypdf>=3.17.0  # Modern PDF processing (PyPDF2 successor)
+python-docx==1.2.0  # Microsoft Word document processing
+unstructured==0.18.11  # Document parsing and text extraction
 
 # === Database ===
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.10  # PostgreSQL database adapter
 
 # === System Utilities ===
-psutil==6.1.0
+psutil==6.1.0  # System and process monitoring
+requests>=2.31.0  # HTTP library for API calls
 
 # === Optional: Table Extraction (Heavy - install only if needed) ===
-# pandas==1.5.3  # Uncomment if table extraction needed
-# tabula-py==2.9.0  # Uncomment if table extraction needed
-# camelot-py[cv]==0.11.0  # Uncomment if table extraction needed
-# opencv-python==4.8.1.78  # Uncomment if table extraction needed
-# pytesseract==0.3.10  # Uncomment if table extraction needed
-# Pillow==10.1.0  # Uncomment if Excel processing needed
-# openpyxl==3.1.2  # Uncomment if Excel processing needed
+# pandas==1.5.3  # Data manipulation and analysis
+# tabula-py==2.9.0  # PDF table extraction
+# camelot-py[cv]==0.11.0  # Advanced PDF table extraction
+# opencv-python==4.8.1.78  # Computer vision library
+# pytesseract==0.3.10  # OCR text recognition
+# Pillow==10.1.0  # Image processing library
+# openpyxl==3.1.2  # Excel file processing
+
+# =============================================================================
+# LIBRARY DETAILED DESCRIPTIONS
+# =============================================================================
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FLASK (flask==3.1.1)                                                      │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Flask is a lightweight, micro web framework for Python that provides the core 
+# web application functionality. A web framework is a software framework designed 
+# to support the development of web applications, web services, and web APIs. 
+# Flask follows the WSGI (Web Server Gateway Interface) standard, which is a 
+# specification that describes how a web server communicates with web applications.
+#
+# HOW IT IS USED:
+# Flask handles HTTP requests, manages routing (determining which function to 
+# call based on the URL), manages user sessions, and serves HTML templates. 
+# It provides decorators like @app.route() to define URL endpoints and methods 
+# to handle different HTTP verbs (GET, POST, etc.).
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# Flask is the backbone of the FAQ Bot web interface. It manages user 
+# authentication, handles document uploads, processes chat interactions, serves 
+# the HTML templates, and provides REST API endpoints for the frontend to 
+# communicate with the backend AI services.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ WERKZEUG (werkzeug>=3.0.0)                                               │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Werkzeug is a WSGI (Web Server Gateway Interface) utility library that Flask 
+# depends on. WSGI is a specification that describes how a web server communicates 
+# with web applications. Werkzeug provides essential web development tools including 
+# secure filename handling, request/response objects, debugging utilities, and 
+# various helper functions for web development.
+#
+# HOW IT IS USED:
+# Werkzeug provides utility functions and classes that handle common web 
+# development tasks. It includes tools for URL routing, request/response 
+# processing, file handling, and security functions. The library is designed 
+# to be lightweight and focused on providing the building blocks for web 
+# applications.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, Werkzeug is primarily used for the secure_filename() function, 
+# which sanitizes uploaded file names to prevent security vulnerabilities like 
+# path traversal attacks. It ensures that files are stored safely on the server 
+# and that malicious filenames cannot compromise the system.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ LANGCHAIN (langchain==0.3.27)                                            │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# LangChain is a framework for developing applications powered by language models. 
+# Language models are AI systems trained on vast amounts of text data that can 
+# understand, generate, and manipulate human language. LangChain provides the 
+# architecture and tools to build AI applications that can reason, remember, 
+# and act based on natural language input.
+#
+# HOW IT IS USED:
+# LangChain provides a modular framework with components for document loading, 
+# text chunking, vector storage, retrieval systems, and language model 
+# interactions. It uses a chain-based architecture where different components 
+# can be connected to create complex AI workflows. The framework handles the 
+# complexity of working with language models and provides abstractions for 
+# common AI tasks.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# LangChain orchestrates the entire AI pipeline in the FAQ Bot. It manages 
+# document loading and chunking, creates and manages the vector database, 
+# handles similarity search, and coordinates the question-answering process. 
+# It's the core AI framework that makes intelligent document processing and 
+# natural language understanding possible.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ LANGCHAIN-COMMUNITY (langchain-community==0.3.27)                        │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# LangChain Community contains community-maintained integrations and extensions 
+# for LangChain. These are additional components that extend the core LangChain 
+# functionality with support for various file formats, databases, and external 
+# services. The community package is maintained separately from the core to 
+# allow for faster iteration and community contributions.
+#
+# HOW IT IS USED:
+# LangChain Community provides document loaders for various file formats, 
+# vector store integrations, and other community-contributed components. These 
+# loaders can read different file types (PDF, Word, CSV, XML) and convert 
+# them into LangChain Document objects. The package also includes integrations 
+# with various vector databases and external AI services.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, LangChain Community supplies the document loaders that can 
+# read different file types and convert them into LangChain Document objects 
+# for processing. It provides the TextLoader, PyMuPDFLoader, 
+# UnstructuredWordDocumentLoader, and CSVLoader classes that handle various 
+# document formats uploaded by users.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ LANGCHAIN-OLLAMA (langchain-ollama==0.3.6)                               │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# LangChain Ollama integration allows LangChain to work with Ollama, a local 
+# LLM (Large Language Model) server that can run models like Llama 3 locally 
+# on your machine or server. Ollama is an open-source project that makes it 
+# easy to run various language models locally without requiring cloud services 
+# or external API keys.
+#
+# HOW IT IS USED:
+# This library provides the OllamaLLM class for generating AI responses and 
+# the OllamaEmbeddings class for creating vector embeddings. It communicates 
+# with the Ollama server running locally on port 11434. The library handles 
+# the communication protocol and data formatting required to interact with 
+# Ollama models.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, LangChain Ollama provides both the language model for 
+# generating AI responses to user questions and the embedding model for 
+# creating vector representations of documents and queries. It enables the 
+# application to run entirely locally without external API dependencies, 
+# using the Llama 3 model for both text generation and embeddings.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ LANGCHAIN-CORE (langchain-core>=0.3.72)                                  │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# LangChain Core contains the fundamental building blocks and abstractions that 
+# LangChain is built upon. These are the base classes, interfaces, and core 
+# data structures that define how LangChain components interact with each other. 
+# The core package provides the foundation that all other LangChain packages 
+# build upon.
+#
+# HOW IT IS USED:
+# LangChain Core provides the Document class for representing text content 
+# with metadata, base classes for chains and models, and core interfaces 
+# for the LangChain ecosystem. It defines the data structures and protocols 
+# that allow different LangChain components to work together seamlessly.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, the Document class from LangChain Core is used throughout 
+# the application to represent uploaded documents, text chunks, and processed 
+# text content. Every piece of text that gets processed, stored, or retrieved 
+# is wrapped in a Document object with metadata about its source and context.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ FAISS-CPU (faiss-cpu==1.11.0.post1)                                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# FAISS (Facebook AI Similarity Search) is a library for efficient similarity 
+# search and clustering of dense vectors. Dense vectors are numerical 
+# representations of text (embeddings) where each number represents some 
+# semantic aspect of the text. Similarity search finds the most similar 
+# vectors in large datasets, which is essential for finding relevant 
+# documents based on semantic meaning rather than just keyword matching.
+#
+# HOW IT IS USED:
+# FAISS creates an index of vectors that allows for extremely fast similarity 
+# search. When you want to find similar vectors, FAISS can quickly identify 
+# the closest matches using various algorithms optimized for speed and 
+# accuracy. The CPU version runs on the central processor and provides 
+# excellent performance for most document collections while ensuring 
+# compatibility across all platforms and deployment environments.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, FAISS stores the vector embeddings of document chunks and 
+# performs similarity search when users ask questions. When a user asks a 
+# question, it gets converted to a vector embedding, and FAISS finds the 
+# most similar document chunks in the database. The CPU version provides 
+# reliable performance and ensures the application works across all 
+# deployment environments including Docker, GKE, and various cloud platforms.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PYMUPDF (PyMuPDF==1.26.3)                                                │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# PyMuPDF is a high-performance Python binding for MuPDF, a lightweight PDF 
+# and XPS viewer. MuPDF is a fast and lightweight PDF renderer that focuses 
+# on speed and efficiency. PyMuPDF provides Python developers with access to 
+# MuPDF's capabilities for reading, parsing, and extracting content from 
+# PDF documents.
+#
+# HOW IT IS USED:
+# PyMuPDF can read PDF files and extract text content, images, and metadata. 
+# It provides both high-level functions for simple text extraction and 
+# low-level access to PDF internals for advanced processing. The library 
+# is designed to be memory-efficient and can handle very large PDF files 
+# without loading the entire document into memory.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, PyMuPDF is the primary PDF reader that extracts text 
+# content from uploaded PDF documents. It's used in the document processing 
+# pipeline to convert PDF files into searchable text that can be chunked 
+# and embedded. PyMuPDF is chosen for its speed and reliability in handling 
+# various PDF formats and structures.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PYPDF2/PYPDF (PyPDF2>=3.0.1 / pypdf>=3.17.0)                            │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# PyPDF2 and pypdf are Python libraries for reading and manipulating PDF files. 
+# PyPDF2 is the older, more established library, while pypdf is the modern 
+# successor with improved features, better maintenance, and enhanced 
+# compatibility with newer PDF standards. Both libraries provide comprehensive 
+# PDF processing capabilities.
+#
+# HOW IT IS USED:
+# These libraries can read PDF files, extract text and metadata, merge PDFs, 
+# split PDFs, and perform various PDF manipulations. They provide both 
+# high-level functions for common tasks and low-level access to PDF objects 
+# for advanced operations. The libraries handle various PDF encodings and 
+# can work with password-protected documents.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, PyPDF2 and pypdf serve as fallback PDF processors if 
+# PyMuPDF fails or isn't available. They provide additional PDF handling 
+# capabilities and ensure robust PDF processing across different file types 
+# and formats. Having multiple PDF libraries increases the reliability of 
+# the document processing pipeline.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PYTHON-DOCX (python-docx==1.2.0)                                         │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Python-docx is a library for creating and updating Microsoft Word (.docx) 
+# files. The .docx format is the modern XML-based format used by Microsoft 
+# Word since 2007. Python-docx can read existing Word documents, extract 
+# their content, and create new documents with various formatting options.
+#
+# HOW IT IS USED:
+# The library provides a high-level interface for working with Word documents. 
+# It can extract text from paragraphs, tables, and other document elements. 
+# It handles the complex structure of Word documents including formatting, 
+# styles, and document properties. Python-docx works with the XML structure 
+# that underlies .docx files.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, python-docx processes uploaded Word documents, extracting 
+# the text content so it can be processed, chunked, and added to the vector 
+# database. It handles the complex structure of Word documents including 
+# paragraphs, tables, and formatting, ensuring that all text content is 
+# properly extracted for AI processing.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ UNSTRUCTURED (unstructured==0.18.11)                                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Unstructured is a library that extracts text content from various document 
+# formats including PDFs, Word documents, emails, and more. It's designed to 
+# handle "unstructured" data, which refers to information that doesn't follow 
+# a predefined data model or organizational structure. The library focuses on 
+# converting various document formats into clean, searchable text.
+#
+# HOW IT IS USED:
+# Unstructured uses various parsing strategies and heuristics to extract text 
+# from different document formats. It can handle complex layouts, tables, 
+# and mixed content types. The library provides both high-level functions 
+# for simple extraction and lower-level access for custom processing needs. 
+# It's designed to be robust and handle edge cases that other libraries 
+# might struggle with.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, unstructured provides additional document parsing 
+# capabilities and serves as a fallback for complex document formats that 
+# other libraries might struggle with. It ensures robust text extraction 
+# across diverse document types and provides a safety net for documents 
+# that might have unusual structures or formatting.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PSYCOPG2-BINARY (psycopg2-binary==2.9.10)                                │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Psycopg2 is the most popular PostgreSQL adapter for Python. PostgreSQL is 
+# a powerful, open-source relational database system. A database adapter 
+# (or driver) is software that allows a programming language to communicate 
+# with a specific database system. Psycopg2 provides the interface between 
+# Python and PostgreSQL.
+#
+# HOW IT IS USED:
+# Psycopg2 provides functions to connect to PostgreSQL databases, execute 
+# SQL queries, and handle database transactions. It supports both the 
+# traditional DB-API interface and more advanced features like connection 
+# pooling, prepared statements, and binary data handling. The binary version 
+# includes pre-compiled binaries for easier installation.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, psycopg2 handles all database operations including user 
+# authentication, chat history storage, document metadata tracking, and 
+# topic management. It provides the connection between the Python application 
+# and the PostgreSQL database that stores persistent data like user accounts, 
+# chat logs, and document information.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PSUTIL (psutil==6.1.0)                                                   │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Psutil (Python System and Process Utilities) is a cross-platform library 
+# for retrieving information on running processes and system utilization. 
+# It provides an interface to retrieve information about system resources 
+# like CPU, memory, disk, network, and running processes. The library 
+# works across different operating systems including Windows, macOS, and Linux.
+#
+# HOW IT IS USED:
+# Psutil provides functions to get information about CPU usage, memory 
+# consumption, disk I/O, network statistics, and process details. It can 
+# monitor system performance in real-time and provide historical data. 
+# The library is designed to be efficient and has minimal impact on 
+# system performance when collecting metrics.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, psutil monitors system resources like RAM, CPU usage, 
+# and available memory to optimize document processing and chunking 
+# strategies. It helps the application adapt its behavior based on 
+# available system resources, ensuring optimal performance across different 
+# deployment environments and preventing resource exhaustion.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ REQUESTS (requests>=2.31.0)                                                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Requests is a popular HTTP library for Python that simplifies making HTTP 
+# requests to web services and APIs. HTTP (Hypertext Transfer Protocol) is 
+# the protocol used for transmitting data on the web. The library provides 
+# a simple interface for sending HTTP requests and handling responses, 
+# making it easy to interact with web services.
+#
+# HOW IT IS USED:
+# Requests provides functions like get(), post(), put(), delete() for 
+# different HTTP methods. It handles cookies, authentication, headers, 
+# and various HTTP features automatically. The library can handle both 
+# simple requests and complex scenarios with custom headers, file uploads, 
+# and session management.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, requests is used for detecting the external IP address 
+# of the deployment environment, which helps determine the correct host 
+# binding for the Flask application. It's also used for any external 
+# API calls or web service integrations that might be needed for enhanced 
+# functionality like external data sources or monitoring services.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# =============================================================================
+# OPTIONAL LIBRARIES:
+# =============================================================================
+#
+# These libraries provide advanced document processing capabilities but are 
+# not required for basic FAQ Bot functionality. They can be uncommented if 
+# you need table extraction from PDFs, OCR capabilities, or advanced image 
+# processing features.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PANDAS (pandas==1.5.3)                                                   │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Data manipulation and analysis library, useful for processing tabular data 
+# extracted from documents or analyzing chat statistics. Pandas provides data 
+# structures and tools for working with structured data like tables and time series.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ TABULA-PY (tabula-py==2.9.0)                                             │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Extracts tables from PDF documents, useful for documents with structured 
+# tabular data that needs to be preserved during processing. It's particularly 
+# good at handling simple table layouts.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ CAMELOT-PY (camelot-py[cv]==0.11.0)                                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Advanced PDF table extraction with better accuracy than tabula-py, especially 
+# for complex table layouts and formatting. It uses computer vision techniques 
+# to identify and extract tables.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ OPENCV-PYTHON (opencv-python==4.8.1.78)                                 │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Computer vision library that can process images within documents, extract 
+# text from images, and analyze document layouts. OpenCV provides tools for 
+# image processing, object detection, and computer vision tasks.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PYTESSERACT (pytesseract==0.3.10)                                        │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# OCR (Optical Character Recognition) engine that can extract text from images, 
+# scanned documents, or PDFs that contain image-based text. OCR converts images 
+# containing text into machine-readable text.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PILLOW (Pillow==10.1.0)                                                  │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Python Imaging Library for image processing, used in conjunction with OCR 
+# and computer vision features for document analysis. Pillow provides tools 
+# for opening, manipulating, and saving images in various formats.
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ OPENPYXL (openpyxl==3.1.2)                                               │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Library for reading and writing Excel files, useful for processing spreadsheet 
+# data that might be uploaded as documents. It can handle both .xlsx and .xls 
+# file formats.

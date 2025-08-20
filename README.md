@@ -18,9 +18,9 @@ A web-based AI Compliance Assistant for document Q&A, topic management, and batc
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. Initialize PostgreSQL:
+2. Initialize services:
    ```bash
-   ./init_postgres.sh
+   ./start_services.sh
    ```
 3. Start the app:
    ```bash

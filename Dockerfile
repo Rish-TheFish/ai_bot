@@ -45,7 +45,7 @@ COPY Logistics_Files/ ./Logistics_Files/
 COPY templates/ ./templates/
 COPY Docker_Container_Files/ ./Docker_Container_Files/
 
-# Create directories that will be mounted as volumes
+# Create empty directories that will be mounted as volumes
 RUN mkdir -p your_docs your_db uploads && \
     chown -R appuser:appuser your_docs your_db uploads
 
@@ -53,7 +53,7 @@ RUN mkdir -p your_docs your_db uploads && \
 RUN chown -R appuser:appuser /app
 
 # Make the init script executable
-RUN chmod +x Docker_Container_Files/init_postgres.sh
+RUN chmod +x Docker_Container_Files/start_services.sh
 
 # Create necessary directories for PostgreSQL and set permissions
 # Use appuser for all directories since we'll use sudo in the init script
@@ -69,4 +69,4 @@ EXPOSE 5000
 USER appuser
 
 # Initialize the database and run all services
-CMD ["./Docker_Container_Files/init_postgres.sh"] 
+CMD ["./Docker_Container_Files/start_services.sh"] 

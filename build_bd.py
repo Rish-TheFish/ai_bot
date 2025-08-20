@@ -6,10 +6,18 @@ from langchain_community.document_loaders import (
     TextLoader, PyMuPDFLoader, UnstructuredWordDocumentLoader, CSVLoader
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, PASSWORD
+
+# Handle imports for both running from root and from Logistics_Files directory
+try:
+    from Logistics_Files.config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD
+except ImportError:
+    try:
+        from config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD
+    except ImportError:
+        raise ImportError("Could not import config_details. Make sure you're running from the correct directory.")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
@@ -46,7 +54,7 @@ def get_loader_for_file(path: str) -> Optional[object]:
     return None
 
 def build_db() -> None:
-    """Build the FAISS vector database from all supported documents in DOCS_PATH."""
+    """Build the FAISS vector database from all supported documents in DOCS_PATH using native Llama embeddings."""
     all_docs: List[Document] = []
     try:
         for root, _, files in os.walk(DOCS_PATH):
@@ -61,9 +69,13 @@ def build_db() -> None:
         if not all_docs:
             logging.warning("⚠️ No documents loaded.")
             return
+        # Use optimal chunking for FAQ bot quality
+        chunk_size = 192    # Good size for FAQ bots
+        chunk_overlap = 54  # 28% overlap for continuity
+        
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=90,   # Much smaller chunks for precise retrieval
-            chunk_overlap=45, # Maintain context between chunks
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
             length_function=len,  # Use character count for consistent sizing
             separators=[
                 "\n\n\n",    # Major section breaks
@@ -82,10 +94,18 @@ def build_db() -> None:
             ]
         )
         chunks = splitter.split_documents(all_docs)
-        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        
+        # Initialize native Llama 3 embeddings through Ollama
+        logging.info("Initializing native Llama 3 embeddings through Ollama...")
+        embeddings = OllamaEmbeddings(
+            model="llama3",
+            base_url="http://localhost:11434"
+        )
+        
+        logging.info(f"Creating FAISS database with {len(chunks)} chunks using native Llama embeddings...")
         db = FAISS.from_documents(chunks, embeddings)
         db.save_local(DB_PATH)
-        logging.info(f"✅ Vector DB built from {len(chunks)} chunks and saved to {DB_PATH}!")
+        logging.info(f"✅ Vector DB built from {len(chunks)} chunks using native Llama embeddings and saved to {DB_PATH}!")
     except Exception as e:
         logging.error(f"❌ Failed to build vector DB: {e}")
 
