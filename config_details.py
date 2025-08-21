@@ -1,6 +1,6 @@
-MODEL_NAME = "llama3:instruct"
+MODEL_NAME = "mistral"
 DOCS_PATH = "./your_docs"
 DB_PATH = "./your_db"
-EMBEDDING_MODEL = "local"
+EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
 UPLOAD_PIN = "1964"
 POSTGRES_PASSWORD = "321Calvin123"

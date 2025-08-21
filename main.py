@@ -41,6 +41,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
+import uuid
 
 # Centralized allowed file extensions
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.csv', '.xml', '.xlsx'}
@@ -68,6 +69,41 @@ DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_h
 
 # Use environment variable for upload PIN
 # UPLOAD_PIN = os.getenv('UPLOAD_PIN', '1964')  # Commented out for now
+
+# Global progress tracking for questionnaire processing
+questionnaire_progress = {}
+
+def cleanup_old_progress():
+    """Clean up old progress entries to prevent memory leaks"""
+    global questionnaire_progress
+    current_time = time.time()
+    to_remove = []
+    
+    for job_id, progress in questionnaire_progress.items():
+        # Remove entries older than 1 hour
+        if 'timestamp' not in progress:
+            progress['timestamp'] = current_time
+        elif current_time - progress['timestamp'] > 3600:  # 1 hour
+            to_remove.append(job_id)
+    
+    for job_id in to_remove:
+        del questionnaire_progress[job_id]
+        add_backend_log(f"Cleaned up old progress entry: {job_id}")
+
+# Clean up old progress entries every hour
+def start_progress_cleanup():
+    """Start background cleanup of old progress entries"""
+    def cleanup_loop():
+        while True:
+            try:
+                cleanup_old_progress()
+                time.sleep(3600)  # Run every hour
+            except Exception as e:
+                add_backend_log(f"Error in progress cleanup: {e}")
+                time.sleep(3600)  # Continue even if there's an error
+    
+    cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+    cleanup_thread.start()
 
 def validate_email(email):
     """Validate email format"""
@@ -598,7 +634,7 @@ def upload_docs():
         if file.filename:
             # Sanitize filename
             safe_filename = secure_filename(file.filename)
-            temp_path = os.path.join('your_docs', safe_filename)
+            temp_path = os.path.join(DOCS_PATH, safe_filename)
             file.save(temp_path)
             temp_paths.append(temp_path)
     
@@ -728,276 +764,318 @@ def ask_question():
 
 @app.route('/upload_questions', methods=['POST'])
 def upload_questions():
-    global ai_app
+    """Upload and process questionnaire with parallel processing and timeouts"""
+    global ai_app, questionnaire_progress
+    
     if not ai_app:
         return jsonify({'error': 'AI Assistant not initialized'})
+    
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'})
+    
     file = request.files['file']
     filename = file.filename
     if not filename:
         return jsonify({'error': 'No file selected'})
-    ext = filename.split('.')[-1].lower()
-    questions = []
+    
+    # Generate job ID for progress tracking
+    job_id = str(uuid.uuid4())
+    questionnaire_progress[job_id] = {
+        'status': 'starting',
+        'total_questions': 0,
+        'completed_questions': 0,
+        'current_question': '',
+        'message': 'Starting questionnaire processing...'
+    }
+    
+    add_backend_log(f"Starting questionnaire processing for: {filename} (Job ID: {job_id})")
+    
     # Extract questions based on file type
-    if ext == 'csv':
-        stream = io.StringIO(file.stream.read().decode('utf-8'))
-        reader = csv.reader(stream)
-        for row in reader:
-            if row:
-                questions.append(row[0])
-    elif ext == 'txt':
-        content = file.stream.read().decode('utf-8')
-        # Split on double newlines or numbered patterns
-        question_patterns = [
-            r'\n\s*\d+\)',  # 1), 2), etc.
-            r'\n\s*Q\d+\.',  # Q1., Q2., etc.
-            r'\n\s*Question\s+\d+:',  # Question 1:, Question 2:, etc.
-            r'\n\s*\d+\.',  # 1., 2., etc.
-        ]
-        
-        questions = []
-        # Try to split on question patterns first
-        for pattern in question_patterns:
-            parts = re.split(pattern, content)
-            if len(parts) > 1:
-                # Skip the first part (before first question) and clean up each question
-                for part in parts[1:]:
-                    question = part.strip()
-                    if question and len(question) > 10:  # Only keep substantial questions
-                        questions.append(question)
-                break
-        
-        # If no pattern worked, split on double newlines
-        if not questions:
-            parts = re.split(r'\n\s*\n', content)
-            for part in parts:
-                question = part.strip()
-                if question and len(question) > 10:
-                    questions.append(question)
-    elif ext == 'pdf':
-        file.stream.seek(0)
-        pdf = PdfReader(io.BytesIO(file.stream.read()))
-        full_text = ""
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                full_text += text + "\n"
-        
-        add_backend_log(f"PDF text length: {len(full_text)} characters")
-        add_backend_log(f"PDF text preview: {full_text[:500]}...")
-        
-        # Split into questions more intelligently
-        
-        # More comprehensive question patterns
-        question_patterns = [
-            r'\n\s*\d+\)',  # 1), 2), etc.
-            r'\n\s*Q\d+\.',  # Q1., Q2., etc.
-            r'\n\s*Question\s+\d+:',  # Question 1:, Question 2:, etc.
-            r'\n\s*\d+\.',  # 1., 2., etc.
-            r'\n\s*\d+\s*[A-Z]',  # 1 A, 2 B, etc.
-            r'\n\s*[A-Z]\)',  # A), B), etc.
-            r'\n\s*[a-z]\)',  # a), b), etc.
-            r'\n\s*[A-Z]\.',  # A., B., etc.
-            r'\n\s*[a-z]\.',  # a., b., etc.
-        ]
-        
-        questions = []
-        if full_text.strip():
-            # Try each pattern and see which one gives the most questions
-            best_pattern = None
-            best_questions = []
-            
-            for pattern in question_patterns:
-                parts = re.split(pattern, full_text)
-                if len(parts) > 1:
-                    pattern_questions = []
-                    for part in parts[1:]:
-                        question = part.strip()
-                        if question and len(question) > 10:
-                            pattern_questions.append(question)
-                    
-                    if len(pattern_questions) > len(best_questions):
-                        best_questions = pattern_questions
-                        best_pattern = pattern
-            
-            if best_questions:
-                questions = best_questions
-                add_backend_log(f"Found {len(questions)} questions using pattern: {best_pattern}")
-            else:
-                add_backend_log("No questions found with numbered patterns, trying alternative methods...")
-                
-                # Try splitting on question marks
-                question_mark_parts = re.split(r'\?', full_text)
-                for part in question_mark_parts[:-1]:  # Skip the last part (after last question mark)
-                    question = part.strip()
-                    if question and len(question) > 10:
-                        # Find the last sentence that ends with a question mark
-                        sentences = re.split(r'[.!?]', question)
-                        if sentences:
-                            last_sentence = sentences[-1].strip()
-                            if last_sentence and len(last_sentence) > 10:
-                                questions.append(last_sentence + "?")
-                
-                if not questions:
-                    # Split on double newlines as last resort
-                    parts = re.split(r'\n\s*\n', full_text)
-                    for part in parts:
-                        question = part.strip()
-                        if question and len(question) > 10:
-                            questions.append(question)
-                
-                add_backend_log(f"Found {len(questions)} questions using alternative methods")
-    elif ext == 'docx':
-        file.stream.seek(0)
-        doc = DocxReader(io.BytesIO(file.stream.read()))
-        for para in doc.paragraphs:
-            line = para.text.strip()
-            if line:
-                questions.append(line)
-    elif ext == 'xml':
-        file.stream.seek(0)
-        tree = ET.parse(io.BytesIO(file.stream.read()))
-        root = tree.getroot()
-        text = ET.tostring(root, encoding='unicode', method='text')
-        if text:
-            questions = [line.strip() for line in text.splitlines() if line.strip()]
-        else:
-            questions = []
-    elif ext == 'xlsx':
-        file.stream.seek(0)
-        try:
-            import openpyxl
-            workbook = openpyxl.load_workbook(io.BytesIO(file.stream.read()), read_only=True)
-            # Get the first worksheet
-            worksheet = workbook.active
-            # Read all cells from the first column (A)
-            for row in worksheet.iter_rows(min_row=1, max_col=1, values_only=True):
-                if row[0] and str(row[0]).strip():  # Check if cell is not empty
-                    question = str(row[0]).strip()
-                    # Only add substantial questions (not just numbers or single words)
-                    if len(question) > 10 and not question.isdigit():
-                        questions.append(question)
-            workbook.close()
-        except Exception as e:
-            return jsonify({'error': f'Error reading XLSX file: {str(e)}'})
-    else:
-        return jsonify({'error': 'Unsupported file type'})
+    questions = extract_questions_from_file(file)
     
-    add_backend_log(f"Processing {len(questions)} questions from {filename}")
+    if not questions:
+        questionnaire_progress[job_id]['status'] = 'error'
+        questionnaire_progress[job_id]['message'] = 'No questions found in file'
+        return jsonify({'error': 'No questions found in file'})
     
-    # Debug: Log all raw questions found
-    for i, q in enumerate(questions):
-        add_backend_log(f"Raw question {i+1}: {q[:100]}...")
+    # Update progress
+    questionnaire_progress[job_id].update({
+        'status': 'processing',
+        'total_questions': len(questions),
+        'message': f'Found {len(questions)} questions, starting parallel processing...'
+    })
     
-    # Clean up questions: remove question numbers and normalize to single lines
-    cleaned_questions = []
-    for i, q in enumerate(questions):
-        # Remove question numbers at the beginning (1), 2), Q1., etc.)
-        cleaned_q = re.sub(r'^\s*(?:\d+\)|Q\d+\.|Question\s+\d+:|\d+\.)\s*', '', q.strip())
-        
-        # Normalize to single line by replacing newlines with spaces
-        cleaned_q = re.sub(r'\s*\n\s*', ' ', cleaned_q)
-        
-        # Remove extra whitespace and normalize spaces
-        cleaned_q = re.sub(r'\s+', ' ', cleaned_q).strip()
-        
-        # Remove any remaining question marks at the beginning
-        cleaned_q = re.sub(r'^\s*\?\s*', '', cleaned_q)
-        
-        # Ensure the question ends with proper punctuation
-        if cleaned_q and not cleaned_q.endswith(('.', '?', '!')):
-            cleaned_q += '?'
-        
-        if cleaned_q and len(cleaned_q) > 10:
-            cleaned_questions.append(cleaned_q)
-            add_backend_log(f"Cleaned question {len(cleaned_questions)}: {cleaned_q[:100]}...")
+    add_backend_log(f"Found {len(questions)} questions, starting parallel processing...")
     
-    questions = cleaned_questions
+    # Process questions in parallel with timeouts
+    results = process_questions_parallel(questions, job_id)
     
-    # Debug: Log the first few cleaned questions
-    for i, q in enumerate(questions[:3]):
-        add_backend_log(f"Sample question {i+1}: {q}")
-    
-    # Get answers for each question
-    results = []
-    for i, q in enumerate(questions):
-        if not q:
-            continue
-        try:
-            add_backend_log(f"Processing question {i+1}/{len(questions)}: {q}")
-            
-            # Ensure the question is not empty and has reasonable length
-            if not q or len(q.strip()) < 3:
-                add_backend_log(f"Skipping question {i+1}: too short or empty")
-                continue
-                
-            # Check if AI app is properly initialized
-            if not ai_app or not hasattr(ai_app, 'db') or not ai_app.db:
-                add_backend_log(f"AI app not properly initialized for question {i+1}")
-                result = {'error': 'AI Assistant not properly initialized. Please upload documents first.'}
-            else:
-                result = ai_app.handle_question(q)
-            
-            if 'error' in result:
-                add_backend_log(f"Error processing question {i+1}: {result['error']}")
-                answer = f"Error: {result['error']}"
-                confidence = 0
-                sources_data = {'summary': 'Error occurred', 'detailed': 'Error occurred'}
-                sources_for_db = 'Error occurred'
-            else:
-                answer = result.get('answer', 'No answer generated')
-                confidence = result.get('confidence', 0)
-                sources = result.get('sources', {})
-                if isinstance(sources, dict):
-                    # Keep the structured format for frontend display
-                    sources_data = sources
-                    # For database storage, use summary
-                    sources_for_db = sources.get('summary', 'N/A')
-                else:
-                    sources_data = {'summary': str(sources), 'detailed': str(sources)}
-                    sources_for_db = str(sources)
-                
-            results.append({
-                'question': q, 
-                'answer': answer, 
-                'confidence': confidence,
-                'sources': sources_data
-            })
-            
-            # Save to database
-            save_chat_history(q, answer, confidence, sources_for_db)
-            
-        except Exception as e:
-            add_backend_log(f"Exception processing question {i+1}: {str(e)}")
-            results.append({
-                'question': q, 
-                'answer': f"Error processing question: {str(e)}", 
-                'confidence': 0,
-                'sources': {'summary': 'Error occurred', 'detailed': 'Error occurred'}
-            })
+    # Update progress to completed
+    questionnaire_progress[job_id].update({
+        'status': 'completed',
+        'completed_questions': len(results),
+        'message': f'Completed processing {len(results)} questions'
+    })
     
     add_backend_log(f"Completed processing {len(results)} questions")
     
-    # Generate CSV file for download with proper formatting for Excel/Sheets
+    # Generate CSV and return results
+    return generate_questionnaire_results(results, filename, job_id)
+
+def extract_questions_from_file(file):
+    """Extract questions from uploaded file"""
+    ext = file.filename.split('.')[-1].lower()
+    questions = []
+    
     try:
+        if ext == 'csv':
+            stream = io.StringIO(file.stream.read().decode('utf-8'))
+            reader = csv.reader(stream)
+            for row in reader:
+                if row and row[0].strip():
+                    questions.append(row[0].strip())
+        
+        elif ext == 'txt':
+            content = file.stream.read().decode('utf-8')
+            questions = extract_questions_from_text(content)
+        
+        elif ext == 'pdf':
+            file.stream.seek(0)
+            pdf = PdfReader(io.BytesIO(file.stream.read()))
+            full_text = ""
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n"
+            questions = extract_questions_from_text(full_text)
+        
+        elif ext == 'docx':
+            file.stream.seek(0)
+            doc = DocxReader(io.BytesIO(file.stream.read()))
+            for para in doc.paragraphs:
+                line = para.text.strip()
+                if line and len(line) > 10:
+                    questions.append(line)
+        
+        else:
+            add_backend_log(f"Unsupported file type: {ext}")
+            return []
+            
+    except Exception as e:
+        add_backend_log(f"Error extracting questions: {e}")
+        return []
+    
+    # Clean and validate questions
+    cleaned_questions = []
+    for q in questions:
+        cleaned_q = clean_question_text(q)
+        if cleaned_q and len(cleaned_q) > 10:
+            cleaned_questions.append(cleaned_q)
+    
+    add_backend_log(f"Extracted {len(cleaned_questions)} valid questions")
+    return cleaned_questions
+
+def extract_questions_from_text(text):
+    """Extract questions from text using multiple patterns"""
+    question_patterns = [
+        r'\n\s*\d+\)',  # 1), 2), etc.
+        r'\n\s*Q\d+\.',  # Q1., Q2., etc.
+        r'\n\s*Question\s+\d+:',  # Question 1:, Question 2:, etc.
+        r'\n\s*\d+\.',  # 1., 2., etc.
+        r'\n\s*\d+\s*[A-Z]',  # 1 A, 2 B, etc.
+        r'\n\s*[A-Z]\)',  # A), B), etc.
+        r'\n\s*[a-z]\)',  # a), b), etc.
+        r'\n\s*[A-Z]\.',  # A., B., etc.
+        r'\n\s*[a-z]\.',  # a., b., etc.
+    ]
+    
+    questions = []
+    if text.strip():
+        # Try each pattern and see which one gives the most questions
+        best_pattern = None
+        best_questions = []
+        
+        for pattern in question_patterns:
+            parts = re.split(pattern, text)
+            if len(parts) > 1:
+                pattern_questions = []
+                for part in parts[1:]:
+                    question = part.strip()
+                    if question and len(question) > 10:
+                        pattern_questions.append(question)
+                
+                if len(pattern_questions) > len(best_questions):
+                    best_questions = pattern_questions
+                    best_pattern = pattern
+        
+        if best_questions:
+            questions = best_questions
+            add_backend_log(f"Found {len(questions)} questions using pattern: {best_pattern}")
+        else:
+            # Fallback: split on question marks
+            question_mark_parts = re.split(r'\?', text)
+            for part in question_mark_parts[:-1]:
+                question = part.strip()
+                if question and len(question) > 10:
+                    sentences = re.split(r'[.!?]', question)
+                    if sentences:
+                        last_sentence = sentences[-1].strip()
+                        if last_sentence and len(last_sentence) > 10:
+                            questions.append(last_sentence + "?")
+    
+    return questions
+
+def clean_question_text(question):
+    """Clean and normalize question text"""
+    # Remove question numbers at the beginning
+    cleaned_q = re.sub(r'^\s*(?:\d+\)|Q\d+\.|Question\s+\d+:|\d+\.)\s*', '', question.strip())
+    
+    # Normalize to single line
+    cleaned_q = re.sub(r'\s*\n\s*', ' ', cleaned_q)
+    
+    # Remove extra whitespace
+    cleaned_q = re.sub(r'\s+', ' ', cleaned_q).strip()
+    
+    # Remove question marks at the beginning
+    cleaned_q = re.sub(r'^\s*\?\s*', '', cleaned_q)
+    
+    # Ensure proper punctuation
+    if cleaned_q and not cleaned_q.endswith(('.', '?', '!')):
+        cleaned_q += '?'
+    
+    return cleaned_q
+
+def process_questions_parallel(questions, job_id):
+    """Process questions in parallel with timeouts"""
+    results = []
+    
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # Submit all questions for processing
+        future_to_question = {
+            executor.submit(process_single_question, q, i, job_id): (q, i) 
+            for i, q in enumerate(questions)
+        }
+        
+        # Collect results as they complete (with timeout)
+        for future in as_completed(future_to_question, timeout=300):  # 5 minute total timeout
+            question, index = future_to_question[future]
+            try:
+                result = future.result(timeout=60)  # 1 minute per question timeout
+                results.append(result)
+                add_backend_log(f"Completed question {index+1}/{len(questions)}: {question[:50]}...")
+            except TimeoutError:
+                add_backend_log(f"Question {index+1} timed out after 60 seconds")
+                results.append({
+                    'question': question,
+                    'answer': 'Processing timed out - question was too complex or system was overloaded',
+                    'confidence': 0,
+                    'sources': {'summary': 'Timeout occurred', 'detailed': 'Processing timed out'}
+                })
+            except Exception as e:
+                add_backend_log(f"Error processing question {index+1}: {e}")
+                results.append({
+                    'question': question,
+                    'answer': f'Error processing question: {str(e)}',
+                    'confidence': 0,
+                    'sources': {'summary': 'Error occurred', 'detailed': str(e)}
+                })
+    
+    # Sort results by original question order
+    results.sort(key=lambda x: questions.index(x['question']))
+    return results
+
+def process_single_question(question, index, job_id):
+    """Process a single question with timeout protection"""
+    global ai_app, questionnaire_progress
+    
+    try:
+        # Update progress
+        if job_id in questionnaire_progress:
+            questionnaire_progress[job_id].update({
+                'current_question': f'Processing question {index+1}: {question[:50]}...',
+                'message': f'Processing question {index+1} of {questionnaire_progress[job_id]["total_questions"]}'
+            })
+        
+        add_backend_log(f"Processing question {index+1}: {question[:50]}...")
+        
+        # Check if AI app is ready
+        if not ai_app or not hasattr(ai_app, 'db') or not ai_app.db:
+            return {
+                'question': question,
+                'answer': 'AI Assistant not properly initialized. Please upload documents first.',
+                'confidence': 0,
+                'sources': {'summary': 'AI not ready', 'detailed': 'AI Assistant not initialized'}
+            }
+        
+        # Process the question
+        result = ai_app.handle_question(question)
+        
+        if 'error' in result:
+            return {
+                'question': question,
+                'answer': f"Error: {result['error']}",
+                'confidence': 0,
+                'sources': {'summary': 'Error occurred', 'detailed': result['error']}
+            }
+        
+        # Extract answer and sources
+        answer = result.get('answer', 'No answer generated')
+        confidence = result.get('confidence', 0)
+        sources = result.get('sources', {})
+        
+        if isinstance(sources, dict):
+            sources_data = sources
+            sources_for_db = sources.get('summary', 'N/A')
+        else:
+            sources_data = {'summary': str(sources), 'detailed': str(sources)}
+            sources_for_db = str(sources)
+        
+        # Save to database
+        try:
+            save_chat_history(question, answer, confidence, sources_for_db)
+        except Exception as e:
+            add_backend_log(f"Warning: Could not save question {index+1} to database: {e}")
+        
+        # Update progress
+        if job_id in questionnaire_progress:
+            questionnaire_progress[job_id]['completed_questions'] += 1
+            questionnaire_progress[job_id]['message'] = f'Completed {questionnaire_progress[job_id]["completed_questions"]} of {questionnaire_progress[job_id]["total_questions"]} questions'
+        
+        return {
+            'question': question,
+            'answer': answer,
+            'confidence': confidence,
+            'sources': sources_data
+        }
+        
+    except Exception as e:
+        add_backend_log(f"Exception processing question {index+1}: {str(e)}")
+        return {
+            'question': question,
+            'answer': f'Error processing question: {str(e)}',
+            'confidence': 0,
+            'sources': {'summary': 'Error occurred', 'detailed': str(e)}
+        }
+
+def generate_questionnaire_results(results, filename, job_id):
+    """Generate CSV and return questionnaire results"""
+    try:
+        # Generate CSV
         output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_ALL)  # Quote all fields to handle commas in text
+        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
         writer.writerow(['Question', 'Answer', 'Source', 'Confidence'])
         
         for row in results:
             try:
-                # Clean up the sources field for better CSV formatting
                 sources_str = ""
                 if isinstance(row['sources'], dict):
                     sources_str = row['sources'].get('summary', 'N/A')
                 else:
                     sources_str = str(row['sources'])
                 
-                # Clean up the answer field - remove newlines and extra spaces
                 clean_answer = re.sub(r'\s+', ' ', str(row['answer'])).strip()
                 
-                # Ensure all fields are strings and handle any encoding issues
                 question = str(row['question']).encode('utf-8', errors='ignore').decode('utf-8')
                 answer = clean_answer.encode('utf-8', errors='ignore').decode('utf-8')
                 source = sources_str.encode('utf-8', errors='ignore').decode('utf-8')
@@ -1006,48 +1084,41 @@ def upload_questions():
                 writer.writerow([question, answer, source, confidence])
             except Exception as row_error:
                 add_backend_log(f"Error writing CSV row: {row_error}")
-                # Write a placeholder row if there's an error
                 writer.writerow(['Error processing question', 'Error processing answer', 'N/A', '0'])
         
         output.seek(0)
-        add_backend_log(f"CSV generated successfully with {len(results)} rows")
-    except Exception as csv_error:
-        add_backend_log(f"Error generating CSV: {csv_error}")
-        # Create a minimal CSV if generation fails
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Question', 'Answer', 'Source', 'Confidence'])
-        writer.writerow(['Error generating CSV', 'Please try again', 'N/A', '0'])
-        output.seek(0)
-    
-    # Create a temporary file for the CSV
-    import tempfile
-    import os
-    import uuid
-    
-    # Generate a unique filename
-    unique_id = str(uuid.uuid4())
-    csv_filename = f'answers_{len(results)}_questions_{unique_id}.csv'
-    
-    # Create temp file with unique name
-    temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-    temp_file.write(output.getvalue())
-    temp_file.close()
-    
-    # Store the mapping in a simple in-memory dict (in production, use Redis or database)
-    if not hasattr(app, 'temp_files'):
-        app.temp_files = {}
-    app.temp_files[unique_id] = temp_file.name
-    
-    # Return both JSON for chat display and CSV file ID
-    return jsonify({
-        'questions': [r['question'] for r in results],
-        'answers': [r['answer'] for r in results],
-        'confidences': [r['confidence'] for r in results],
-        'sources': [r['sources'] for r in results],
-        'csv_id': unique_id,
-        'filename': csv_filename
-    })
+        
+        # Create temporary file
+        import tempfile
+        import uuid
+        
+        unique_id = str(uuid.uuid4())
+        csv_filename = f'answers_{len(results)}_questions_{unique_id}.csv'
+        
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        temp_file.write(output.getvalue())
+        temp_file.close()
+        
+        # Store file mapping
+        if not hasattr(app, 'temp_files'):
+            app.temp_files = {}
+        app.temp_files[unique_id] = temp_file.name
+        
+        add_backend_log(f"Questionnaire processing complete: {len(results)} questions processed")
+        
+        return jsonify({
+            'questions': [r['question'] for r in results],
+            'answers': [r['answer'] for r in results],
+            'confidences': [r['confidence'] for r in results],
+            'sources': [r['sources'] for r in results],
+            'csv_id': unique_id,
+            'filename': csv_filename,
+            'job_id': job_id
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error generating results: {e}")
+        return jsonify({'error': f'Error generating results: {str(e)}'})
 
 @app.route('/download_csv/<file_id>', methods=['GET'])
 def download_csv(file_id):
@@ -1096,7 +1167,7 @@ def get_history():
 def get_documents():
     """Get list of uploaded documents"""
     try:
-        docs_dir = 'your_docs'
+        docs_dir = DOCS_PATH
         documents = []
         topic_id = request.args.get('topic', 'all')
         selected_topics_json = request.args.get('selected_topics')
@@ -1211,7 +1282,7 @@ def check_filename_conflict():
         if not filename:
             return jsonify({'error': 'Filename not provided'})
         
-        docs_dir = 'your_docs'
+        docs_dir = DOCS_PATH
         file_path = os.path.join(docs_dir, filename)
         
         exists = os.path.exists(file_path)
@@ -1283,7 +1354,7 @@ def upload_document():
             return jsonify({'error': f'File type {file_ext} not allowed. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'})
         
         # Check for filename conflict
-        docs_dir = 'your_docs'
+        docs_dir = DOCS_PATH
         os.makedirs(docs_dir, exist_ok=True)
         file_path = os.path.join(docs_dir, file.filename)
         
@@ -1843,7 +1914,7 @@ def upload_single_document(file, topic_ids):
             }
         
         # Check for filename conflict
-        docs_dir = 'your_docs'
+        docs_dir = DOCS_PATH
         os.makedirs(docs_dir, exist_ok=True)
         file_path = os.path.join(docs_dir, file.filename)
         
@@ -2386,58 +2457,190 @@ def vector_db_health():
         add_backend_log(f"Error getting vector database health: {e}")
         return jsonify({'error': str(e)})
 
+@app.route('/questionnaire_progress/<job_id>', methods=['GET'])
+def get_questionnaire_progress(job_id):
+    """Get progress of questionnaire processing"""
+    if job_id in questionnaire_progress:
+        return jsonify(questionnaire_progress[job_id])
+    else:
+        return jsonify({'error': 'Job not found'})
+
+@app.route('/force_cleanup_and_rebuild', methods=['POST'])
+def force_cleanup_and_rebuild():
+    """Force a complete cleanup of both PostgreSQL and vector databases, then rebuild everything."""
+    try:
+        add_backend_log("Starting forced cleanup and rebuild of all databases...")
+        
+        # Step 1: Clean up PostgreSQL database completely
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get all document filenames from PostgreSQL
+        cursor.execute('SELECT filename FROM documents')
+        postgres_files = [row[0] for row in cursor.fetchall()]
+        add_backend_log(f"Found {len(postgres_files)} documents in PostgreSQL: {postgres_files}")
+        
+        # Check which files actually exist on disk
+        existing_files = []
+        missing_files = []
+        for filename in postgres_files:
+            file_path = os.path.join('your_docs', filename)
+            if os.path.exists(file_path):
+                existing_files.append(filename)
+            else:
+                missing_files.append(filename)
+        
+        add_backend_log(f"Files on disk: {existing_files}")
+        add_backend_log(f"Missing files (will be cleaned from PostgreSQL): {missing_files}")
+        
+        # Clean up missing files from PostgreSQL
+        if missing_files:
+            for filename in missing_files:
+                cursor.execute('SELECT id FROM documents WHERE filename = %s', (filename,))
+                result = cursor.fetchone()
+                if result:
+                    document_id = result[0]
+                    # Clean up document-topic relationships
+                    cursor.execute('DELETE FROM document_topics WHERE document_id = %s', (document_id,))
+                    # Delete the document record
+                    cursor.execute('DELETE FROM documents WHERE id = %s', (document_id,))
+                    add_backend_log(f"Cleaned up missing document from PostgreSQL: {filename}")
+        
+        # Check for orphaned topics
+        cursor.execute('''
+            DELETE FROM topics t 
+            WHERE NOT EXISTS (
+                SELECT 1 FROM document_topics dt WHERE dt.topic_id = t.id
+            )
+        ''')
+        orphaned_topics_count = cursor.rowcount
+        if orphaned_topics_count > 0:
+            add_backend_log(f"Cleaned up {orphaned_topics_count} orphaned topics")
+        
+        conn.commit()
+        conn.close()
+        add_backend_log("PostgreSQL cleanup completed")
+        
+        # Step 2: Force rebuild of vector database
+        global ai_app, ai_app_ready
+        try:
+            if ai_app:
+                ai_app.force_rebuild_db()
+            else:
+                ai_app = AIApp(None)
+                ai_app.force_rebuild_db()
+            ai_app_ready = True
+            add_backend_log("Vector database force rebuild completed")
+        except Exception as e:
+            add_backend_log(f"Error in vector database rebuild: {e}")
+            return jsonify({'error': f'Vector database rebuild failed: {str(e)}'})
+        
+        # Step 3: Verify synchronization
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM documents')
+        postgres_count = cursor.fetchone()[0]
+        conn.close()
+        
+        # Get vector DB count
+        vector_count = 0
+        if ai_app and ai_app.db and hasattr(ai_app.db, 'index'):
+            vector_count = ai_app.db.index.ntotal
+        
+        add_backend_log(f"Database synchronization complete - PostgreSQL: {postgres_count}, Vector DB: {vector_count}")
+        
+        return jsonify({
+            'status': 'success', 
+            'message': 'Complete cleanup and rebuild successful',
+            'postgres_count': postgres_count,
+            'vector_count': vector_count
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error in force cleanup and rebuild: {e}")
+        return jsonify({'error': str(e)})
+
+@app.route('/check_database_status', methods=['GET'])
+def check_database_status():
+    """Check the current status of both PostgreSQL and vector databases."""
+    try:
+        status = {}
+        
+        # Check PostgreSQL database
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get document count and filenames
+        cursor.execute('SELECT COUNT(*) FROM documents')
+        postgres_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT filename FROM documents ORDER BY filename')
+        postgres_files = [row[0] for row in cursor.fetchall()]
+        
+        # Get topic count
+        cursor.execute('SELECT COUNT(*) FROM topics')
+        topic_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        status['postgresql'] = {
+            'document_count': postgres_count,
+            'topic_count': topic_count,
+            'documents': postgres_files
+        }
+        
+        # Check vector database
+        global ai_app
+        if ai_app and ai_app.db and hasattr(ai_app.db, 'index'):
+            vector_count = ai_app.db.index.ntotal
+            status['vector_db'] = {
+                'chunk_count': vector_count,
+                'index_type': 'HNSW' if hasattr(ai_app.db.index, 'hnsw') else 'Standard',
+                'ready': True
+            }
+        else:
+            status['vector_db'] = {
+                'chunk_count': 0,
+                'index_type': 'None',
+                'ready': False
+            }
+        
+        # Check filesystem
+        docs_path = 'your_docs'
+        if os.path.exists(docs_path):
+            files_on_disk = [f for f in os.listdir(docs_path) if os.path.isfile(os.path.join(docs_path, f))]
+            status['filesystem'] = {
+                'document_count': len(files_on_disk),
+                'documents': sorted(files_on_disk)
+            }
+        else:
+            status['filesystem'] = {
+                'document_count': 0,
+                'documents': []
+            }
+        
+        # Check for mismatches
+        postgres_set = set(postgres_files)
+        filesystem_set = set(status['filesystem']['documents'])
+        
+        status['synchronization'] = {
+            'postgres_only': list(postgres_set - filesystem_set),
+            'filesystem_only': list(filesystem_set - postgres_set),
+            'both': list(postgres_set & filesystem_set),
+            'synchronized': postgres_set == filesystem_set
+        }
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        add_backend_log(f"Error checking database status: {e}")
+        return jsonify({'error': str(e)})
+
 if __name__ == '__main__':
     print('Flask app starting...')
     
-    # Initialize database tables
-    try:
-        init_db()
-        print("Database tables initialized successfully")
-    except Exception as e:
-        print(f"Error initializing database: {e}")
+    # Start background progress cleanup
+    start_progress_cleanup()
     
-    import socket
-    import os
-    
-    # Auto-detect environment and set appropriate host
-    port = 5000
-    host = None  # Initialize host variable
-    
-    # Check if running in containerized environment (Docker/K8s) or production
-    if (os.path.exists('/.dockerenv') or 
-        os.environ.get('DOCKER_CONTAINER') or 
-        os.environ.get('KUBERNETES_SERVICE_HOST') or
-        os.environ.get('FLASK_ENV') == 'production'):
-        host = '0.0.0.0'
-        print("🐳 Running in containerized environment - allowing external access")
-    else:
-        host = '127.0.0.1'
-        print("💻 Running locally - localhost only")
-    
-    print(f' * Running on http://{host}:{port}')
-    
-    # Get network information
-    try:
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        
-        if host == '0.0.0.0':
-            # Show consolidated access information
-            print(f' * Container accessible on all interfaces')
-            print(f' * Local network access: http://{local_ip}:{port}')
-            
-            # Show public IP for GCP reference only
-            try:
-                public_ip = requests.get('https://ifconfig.me', timeout=3).text
-                print(f' * Public IP (GCP reference): {public_ip}')
-            except:
-                print(f' * Public IP: Could not determine')
-        else:
-            # Local development
-            if local_ip != host:
-                print(f' * Also available at http://{local_ip}:{port}')
-                
-    except Exception as e:
-        print(f' * Could not determine network details: {e}')
-    
-    app.run(host=host, port=port, debug=False)  # Disable debug in production
+    # Start the Flask app
+    app.run(host='0.0.0.0', port=5000, debug=False)

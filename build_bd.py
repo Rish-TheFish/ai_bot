@@ -12,10 +12,10 @@ from langchain_core.documents import Document
 
 # Handle imports for both running from root and from Logistics_Files directory
 try:
-    from Logistics_Files.config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD
+    from Logistics_Files.config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME
 except ImportError:
     try:
-        from config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD
+        from config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME
     except ImportError:
         raise ImportError("Could not import config_details. Make sure you're running from the correct directory.")
 
@@ -54,7 +54,7 @@ def get_loader_for_file(path: str) -> Optional[object]:
     return None
 
 def build_db() -> None:
-    """Build the FAISS vector database from all supported documents in DOCS_PATH using native Llama embeddings."""
+    """Build the FAISS vector database from all supported documents in DOCS_PATH using config model embeddings."""
     all_docs: List[Document] = []
     try:
         for root, _, files in os.walk(DOCS_PATH):
@@ -95,17 +95,17 @@ def build_db() -> None:
         )
         chunks = splitter.split_documents(all_docs)
         
-        # Initialize native Llama 3 embeddings through Ollama
-        logging.info("Initializing native Llama 3 embeddings through Ollama...")
+        # Initialize embeddings through Ollama using config model
+        logging.info(f"Initializing {MODEL_NAME} embeddings through Ollama...")
         embeddings = OllamaEmbeddings(
-            model="llama3",
+            model=MODEL_NAME,
             base_url="http://localhost:11434"
         )
         
-        logging.info(f"Creating FAISS database with {len(chunks)} chunks using native Llama embeddings...")
+        logging.info(f"Creating FAISS database with {len(chunks)} chunks using {MODEL_NAME} embeddings...")
         db = FAISS.from_documents(chunks, embeddings)
         db.save_local(DB_PATH)
-        logging.info(f"✅ Vector DB built from {len(chunks)} chunks using native Llama embeddings and saved to {DB_PATH}!")
+        logging.info(f"✅ Vector DB built from {len(chunks)} chunks using {MODEL_NAME} embeddings and saved to {DB_PATH}!")
     except Exception as e:
         logging.error(f"❌ Failed to build vector DB: {e}")
 

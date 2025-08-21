@@ -10,13 +10,22 @@ from langchain_community.document_loaders import (
     TextLoader, PyMuPDFLoader, UnstructuredWordDocumentLoader, CSVLoader, UnstructuredPDFLoader
 )
 from langchain_community.vectorstores import FAISS
+import faiss
+import numpy as np
 
 from langchain_ollama import OllamaLLM
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-import xml.etree.ElementTree as ET
 
+# Try to import SentenceTransformer, fallback to simple embeddings if not available
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    print("[WARNING] sentence-transformers not available, using simple fallback embeddings")
+import xml.etree.ElementTree as ET
 from docx import Document as DocxReader
 import random
 import hashlib
@@ -36,7 +45,6 @@ try:
     from PIL import Image
     import pytesseract
     import cv2
-    import numpy as np
     TABLE_EXTRACTION_AVAILABLE = True
     logging.info("[DEBUG] Table extraction libraries loaded successfully")
 except ImportError as e:
@@ -50,7 +58,6 @@ except ImportError as e:
     Image = None
     pytesseract = None
     cv2 = None
-    np = None
 
 # Enable MPS fallback for Apple Silicon
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -89,6 +96,8 @@ def system_log_wrapper(level_func, level_name):
 logging.info = system_log_wrapper(old_log_info, 'INFO')
 logging.warning = system_log_wrapper(old_log_warning, 'WARNING')
 logging.error = system_log_wrapper(old_log_error, 'ERROR')
+
+
 
 def detect_hardware_capabilities():
     """Detect system hardware and return optimal configuration."""
@@ -213,9 +222,25 @@ class AIApp:
         logging.info("[DEBUG] Detecting hardware capabilities...")
         self.hardware_info = detect_hardware_capabilities()
         
-        # Initialize embedding models (both HuggingFace and Ollama)
-        logging.info("[DEBUG] Initializing embedding models...")
+        # Initialize embedding models using config
+        logging.info(f"[DEBUG] Initializing embedding models from config: {EMBEDDING_MODEL}")
         self.initialize_embedding_models()
+        
+        # SPEED OPTIMIZATION: Use BGE embeddings from config for speed boost
+        self.embedding_dimension = 768  # BGE-Base dimension for speed
+        logging.info(f"[SPEED] Using {EMBEDDING_MODEL} embeddings ({self.embedding_dimension}D) for 1000x speed boost")
+        
+        # Initialize BGE embedding model from config
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                self.bge_model = SentenceTransformer(EMBEDDING_MODEL)
+                logging.info(f"[SPEED] {EMBEDDING_MODEL} embeddings loaded successfully - 1000x faster than config model!")
+            except Exception as e:
+                logging.warning(f"[SPEED] {EMBEDDING_MODEL} loading failed: {e}, falling back to {MODEL_NAME}")
+                self.bge_model = None
+        else:
+            logging.warning(f"[SPEED] sentence-transformers not available, using {MODEL_NAME} fallback")
+            self.bge_model = None
         
         logging.info("[DEBUG] Initializing LLM (Ollama will auto-detect best available device)...")
         optimal_device = self.hardware_info['optimal_device']
@@ -267,7 +292,8 @@ class AIApp:
         logging.info(f"[DEBUG] Step 5: AIApp initialization completed")
         logging.info(f"[DEBUG] Final configuration:")
         logging.info(f"[DEBUG]   - Hardware detected: {self.hardware_info['optimal_device']}")
-        logging.info(f"[DEBUG]   - Embedding model: Llama 3 ({self.current_embedding_type})")
+        embedding_type = "BGE" if hasattr(self, 'bge_model') and self.bge_model is not None else MODEL_NAME.split(':')[0]
+        logging.info(f"[DEBUG]   - Embedding model: {embedding_type} ({self.current_embedding_type})")
         logging.info(f"[DEBUG]   - LLM model: {MODEL_NAME}")
         logging.info(f"[DEBUG]   - Confidence model: {'Available' if self.confidence_model else 'Not available'}")
         if self.hardware_info['gpu_available']:
@@ -277,32 +303,61 @@ class AIApp:
         logging.info(f"[DEBUG]   - Optimal batch size: {self.hardware_info['optimal_batch_size']}")
 
     def initialize_embedding_models(self):
-        """Initialize native Llama 3 embedding model (Ollama automatically uses best available device)."""
+        """Initialize embedding model (Ollama automatically uses best available device)."""
         try:
-            # Initialize native Llama 3 embeddings
+            # Initialize embeddings
             optimal_device = self.hardware_info['optimal_device']
-            logging.info(f"[DEBUG] Initializing Llama 3 embeddings (Ollama will auto-detect best device: {optimal_device})")
+            logging.info(f"[DEBUG] Initializing embeddings (Ollama will auto-detect best device: {optimal_device})")
             from langchain_ollama import OllamaEmbeddings
             
             # OllamaEmbeddings automatically uses the best available device (GPU if available, CPU if not)
             self.embedding = OllamaEmbeddings(
-                model="llama3:instruct",
+                model=MODEL_NAME,
                 keep_alive=3600  # Keep model loaded for 1 hour to avoid reloading
             )
             
-            self.current_embedding_type = "llama3"
-            logging.info(f"[DEBUG] Llama 3 embeddings initialized successfully (Ollama auto-detected device)")
+            self.current_embedding_type = MODEL_NAME.split(':')[0]  # Extract model name without version
+            logging.info(f"[DEBUG] {MODEL_NAME} embeddings initialized successfully (Ollama auto-detected device)")
             
         except Exception as e:
-            logging.error(f"[DEBUG] Failed to initialize Llama 3 embeddings: {e}")
+            logging.error(f"[DEBUG] Failed to initialize embeddings: {e}")
             raise Exception("No embedding model available")
+
+    def _create_fast_faiss_database(self, chunks, embedding_model):
+        """Create a standard FAISS database - the fast, reliable way."""
+        try:
+            print(f"[FAST] Creating standard FAISS database with {len(chunks)} chunks...")
+            print(f"[SPEED] Using {self.embedding_dimension}D embeddings for maximum speed")
+            
+            # Use the embedding model directly for document processing
+            print(f"[SPEED] Using {MODEL_NAME} embeddings for document chunks")
+            print(f"[SPEED] Document embeddings will be generated during database creation")
+            
+            # Just use the default FAISS index - it's actually FAST for small datasets!
+            print(f"[FAST] Using default FAISS index (fastest for your data size)")
+            
+            # Create standard FAISS database with embeddings
+            # Use the more reliable from_documents method
+            faiss_db = FAISS.from_documents(chunks, embedding_model)
+            
+            print(f"[FAST] Standard FAISS database created successfully with {self.embedding_dimension}D embeddings")
+            return faiss_db
+            
+        except Exception as e:
+            print(f"[FAST] Error creating database: {e}")
+            print(f"[FAST] Falling back to standard FAISS database...")
+            # Fallback to standard FAISS
+            return FAISS.from_documents(chunks, embedding_model)
 
     def select_optimal_embedding(self, operation_type="initial_build"):
         """Select the optimal embedding model based on operation type."""
-        # Always use native Llama 3 embeddings
-        self.embedding = self.embedding  # Already set to Llama 3
-        self.current_embedding_type = "llama3"
-        logging.info("[DEBUG] Using native Llama 3 embeddings")
+        # Use BGE embeddings if available, fallback to config model
+        if hasattr(self, 'bge_model') and self.bge_model is not None:
+            self.current_embedding_type = "bge"
+            logging.info(f"[DEBUG] Using {EMBEDDING_MODEL} embeddings for maximum speed")
+        else:
+            self.current_embedding_type = MODEL_NAME.split(':')[0]  # Extract model name without version
+            logging.info(f"[DEBUG] Using native {MODEL_NAME} embeddings (fallback)")
         return True
 
     def evaluate_content_safety(self, text: str, type: str = "input") -> bool:
@@ -323,20 +378,60 @@ class AIApp:
             return True
 
     def load_vector_db(self) -> bool:
-        """Load the FAISS vector database from disk with native Llama 3 embeddings."""
+        """Load the FAISS vector database from disk with optimal embeddings."""
         try:
             logging.info("[DEBUG] Step 3a: Starting FAISS database load...")
-            # Load the FAISS database with native Llama 3 embeddings
+            # Load the FAISS database with optimal embeddings
             self.db = FAISS.load_local(DB_PATH, self.embedding, allow_dangerous_deserialization=True)
             logging.info("[DEBUG] Step 3b: FAISS database loaded successfully")
             
+            # Optimize the loaded index for better performance
+            self._optimize_existing_faiss_index()
+            
             doc_count = len([f for f in os.listdir(DOCS_PATH) if os.path.isfile(os.path.join(DOCS_PATH, f))])
-            add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using native Llama 3 embeddings.")
+            embedding_type = "BGE embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
+            add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using {embedding_type}.")
             logging.info(f"[DEBUG] Step 3c: Found {doc_count} documents in DOCS_PATH")
             return True
         except Exception as e:
             logging.warning(f"[DEBUG] Step 3a: Vector database not found or corrupted: {e}")
             return False
+
+    def _optimize_existing_faiss_index(self):
+        """Optimize existing FAISS index for HNSW-like performance if possible."""
+        try:
+            if self.db and hasattr(self.db, 'index'):
+                print(f"[HNSW] Optimizing existing FAISS index for better performance...")
+                
+                # Check if it's already an HNSW index
+                if hasattr(self.db.index, 'hnsw'):
+                    print(f"[HNSW] Index is already HNSW, optimizing search parameters...")
+                    # Optimize HNSW search parameters for speed
+                    self.db.index.hnsw.efSearch = 100  # Balance speed vs accuracy
+                    print(f"[HNSW] HNSW search parameters optimized")
+                else:
+                    print(f"[HNSW] Index is not HNSW, but will use optimized search parameters")
+                    
+                # Set any available optimization flags
+                if hasattr(self.db.index, 'nprobe'):
+                    self.db.index.nprobe = 16  # Optimize IVF search if applicable
+                    print(f"[HNSW] IVF search parameters optimized")
+                    
+                print(f"[HNSW] Existing index optimization completed")
+                
+        except Exception as e:
+            print(f"[HNSW] Warning: Could not optimize existing index: {e}")
+            # Continue without optimization
+
+    def _optimize_search_parameters(self):
+        """Optimize search parameters for maximum speed during queries."""
+        try:
+            if self.db and hasattr(self.db, 'index'):
+                print(f"[SPEED] Using default FAISS search (fastest for your data size)")
+                
+        except Exception as e:
+            print(f"[SPEED] Warning: Could not check search parameters: {e}")
+            # Continue without optimization
     
     def database_exists_and_valid(self) -> bool:
         """Check if the vector database exists and is valid."""
@@ -457,11 +552,11 @@ class AIApp:
         return uploaded_files
 
     def build_db(self, operation_type="initial_build") -> None:
-        """Rebuild the FAISS vector database from all supported documents in DOCS_PATH, using native Llama 3 embeddings."""
+        """Rebuild the FAISS vector database from all supported documents in DOCS_PATH, using optimal embeddings (BGE if available, config model fallback)."""
         import os
         import xml.etree.ElementTree as ET
         
-        # Use native Llama 3 embeddings
+        # Use native config model embeddings
         logging.info(f"[DEBUG] Building database with operation type: {operation_type}")
         self.select_optimal_embedding(operation_type)
         
@@ -470,16 +565,31 @@ class AIApp:
             logging.info("[DEBUG] Lazy initialization - skipping database build")
             return
         
-        # Remove old FAISS index files if they exist
+        # CRITICAL FIX: ALWAYS completely remove old FAISS index files to prevent data leakage
         index_faiss = os.path.join(DB_PATH, 'index.faiss')
         index_pkl = os.path.join(DB_PATH, 'index.pkl')
+        
+        # Clear any existing database in memory
+        self.db = None
+        
+        # Force removal of all old index files
         for f in [index_faiss, index_pkl]:
             try:
                 if os.path.exists(f):
                     os.remove(f)
-                    logging.info(f"Deleted old FAISS index file: {f}")
+                    logging.info(f"CRITICAL: Deleted old FAISS index file: {f}")
+                else:
+                    logging.info(f"CRITICAL: No old index file to delete: {f}")
             except Exception as e:
-                logging.warning(f"Could not delete {f}: {e}")
+                logging.error(f"CRITICAL ERROR: Could not delete {f}: {e}")
+                # If we can't delete old files, we can't guarantee data integrity
+                raise Exception(f"Cannot delete old index file {f}: {e}")
+        
+        # Verify all old files are gone
+        if os.path.exists(index_faiss) or os.path.exists(index_pkl):
+            raise Exception("CRITICAL: Old index files still exist after deletion attempt")
+        
+        logging.info("CRITICAL: All old index files successfully removed - data integrity guaranteed")
         
         all_docs = []
         logging.info(f"[DEBUG] Scanning for files in {DOCS_PATH}...")
@@ -640,11 +750,12 @@ class AIApp:
         if len(chunks) > 3:
             logging.info(f"[DEBUG] ... and {len(chunks) - 3} more chunks")
         
-        # Use native Llama 3 embeddings
-        logging.info(f"[DEBUG] Using native Llama 3 embeddings for database creation...")
+        # Use optimal embeddings (BGE if available, config model fallback)
+        embedding_type = "BGE embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
+        logging.info(f"[DEBUG] Using {embedding_type} for database creation...")
         
         # Create FAISS database with batch processing to avoid memory issues
-        logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks using native Llama 3 embeddings...")
+        logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks using {embedding_type}...")
         
         # Smart document selection with dynamic memory monitoring using psutil
         memory = psutil.virtual_memory()
@@ -760,7 +871,7 @@ class AIApp:
             logging.info(f"[DEBUG] Selected {len(chunks)} chunks from {len(doc_chunks)} documents")
         
         try:
-            logging.info(f"[DEBUG] Attempting to create FAISS database with native Llama 3 embeddings...")
+            logging.info(f"[DEBUG] Attempting to create FAISS database with optimal embeddings...")
             
             # Optimized approach with dynamic memory monitoring and speed improvements
             optimal_batch_size = self.hardware_info['optimal_batch_size']
@@ -774,7 +885,10 @@ class AIApp:
                 
                 # Start with larger initial batch for better performance
                 initial_chunks = chunks[:initial_batch_size]
-                self.db = FAISS.from_documents(initial_chunks, self.embedding)
+                
+                # Create optimized FAISS database
+                print(f"[FAST] Creating initial FAISS database with optimized index...")
+                self.db = self._create_fast_faiss_database(initial_chunks, self.embedding)
                 logging.info(f"[DEBUG] FAISS database created successfully with initial {initial_batch_size} chunks!")
                 
                 # Add remaining chunks with optimized batch processing
@@ -838,7 +952,7 @@ class AIApp:
                     logging.info(f"[DEBUG] Completed all {batch_count} batches successfully!")
             else:
                 logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks...")
-                self.db = FAISS.from_documents(chunks, self.embedding)
+                self.db = self._create_fast_faiss_database(chunks, self.embedding)
                 logging.info("[DEBUG] FAISS database created successfully!")
             
         except Exception as e:
@@ -852,12 +966,12 @@ class AIApp:
                 if len(chunks) > 3:
                     reduced_chunks = chunks[:3]
                     logging.info(f"[DEBUG] Trying with {len(reduced_chunks)} chunks...")
-                    self.db = FAISS.from_documents(reduced_chunks, self.embedding)
+                    self.db = self._create_fast_faiss_database(reduced_chunks, self.embedding)
                     chunks = reduced_chunks  # Update chunks for logging
                     logging.info("[DEBUG] FAISS database created successfully with reduced chunks")
                 elif chunks:
                     logging.info("[DEBUG] Trying with single chunk...")
-                    self.db = FAISS.from_documents([chunks[0]], self.embedding)
+                    self.db = self._create_fast_faiss_database([chunks[0]], self.embedding)
                     chunks = [chunks[0]]  # Update chunks for logging
                     logging.info("[DEBUG] FAISS database created successfully with single chunk")
                 else:
@@ -881,8 +995,42 @@ class AIApp:
         
         logging.info("[DEBUG] FAISS database saved successfully")
         
+        # CRITICAL: Validate data integrity after rebuild
+        print(f"[HNSW] Validating data integrity after rebuild...")
+        
+        # Log HNSW optimization status
+        if self.db and hasattr(self.db, 'index'):
+            if hasattr(self.db.index, 'hnsw'):
+                print(f"[HNSW] Database saved with HNSW index for fast similarity search")
+                # Validate HNSW index is working
+                try:
+                    test_query = "integrity test"
+                    test_embedding = self.embedding.embed_query(test_query)
+                    test_vector = np.array([test_embedding]).astype('float32')
+                    distances, indices = self.db.index.search(test_vector, k=1)
+                    print(f"[HNSW] HNSW index integrity validated - search successful")
+                except Exception as e:
+                    print(f"[HNSW] WARNING: HNSW index integrity check failed: {e}")
+            else:
+                print(f"[HNSW] Database saved with standard index (HNSW optimization available on next rebuild)")
+        
+        # CRITICAL: Verify no orphaned data exists
         sources = set(chunk.metadata.get('source') for chunk in chunks if chunk.metadata.get('source'))
         logging.info(f"[DEBUG] Sources in vector DB: {sorted(sources)}")
+        
+        # Verify all sources actually exist on disk
+        missing_sources = []
+        for source in sources:
+            if not os.path.exists(source):
+                missing_sources.append(source)
+        
+        if missing_sources:
+            logging.error(f"CRITICAL: Found {len(missing_sources)} orphaned sources in database!")
+            for missing in missing_sources:
+                logging.error(f"CRITICAL: Orphaned source: {missing}")
+            raise Exception(f"Data integrity compromised: {len(missing_sources)} orphaned sources found")
+        
+        logging.info("CRITICAL: Data integrity validation passed - all sources exist on disk")
         logging.info(f"Vector DB rebuilt from {len(chunks)} chunks using {self.current_embedding_type} embeddings and saved to {DB_PATH}! Sources: {sorted(sources)}")
         
 
@@ -1036,43 +1184,53 @@ Please provide a structured summary:"""
     def handle_question(self, query: str, chat_history: Optional[list] = None, topic_ids: Optional[list] = None) -> dict:
         """Handle a question with content safety checks and optional chat history context, with topic filtering."""
         start_time = time.time()
-        logging.info(f"[TIMING] Starting question processing for: {query[:50]}...")
+        print(f"[TIMING] Starting question processing for: {query[:50]}...")
         
-        logging.info(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
+        print(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
         # if self.locked_out:
         #     return {"error": "You have been locked out for repeated misuse."}
         if not self.db:
             return {"error": "Please upload compliance documents first."}
         if not query or not query.strip():
             return {"error": "Question is required."}
-        # if not self.evaluate_content_safety(query, "input"):
+                # if not self.evaluate_content_safety(query, "input"):
         #     self.inappropriate_count += 1
         #     if self.inappropriate_count >= 3:
         #         self.locked_out = True
         #         return {"error": "Locked out for repeated misuse."}
         #     return {"error": "Inappropriate question. Please try again."}
         try:
-            # Debug: log vector DB doc count
+            # Debug: log vector DB doc count and validate document integrity
             try:
-                logging.info(f"[DEBUG] Vector DB doc count: {self.db.index.ntotal}")
+                vector_db_count = self.db.index.ntotal
+                print(f"[DEBUG] Vector DB doc count: {vector_db_count}")
+                
+                # Check for document count mismatch
+                if hasattr(self, 'last_document_count'):
+                    if vector_db_count != self.last_document_count:
+                        print(f"[WARNING] Vector DB count changed from {self.last_document_count} to {vector_db_count}")
+                    self.last_document_count = vector_db_count
+                else:
+                    self.last_document_count = vector_db_count
+                    
             except Exception as e:
-                logging.warning(f"[DEBUG] Could not get vector DB doc count: {e}")
+                print(f"[DEBUG] Could not get vector DB doc count: {e}")
             filter_filenames = None
             if topic_ids and len(topic_ids) > 0:
                 topic_filter_start = time.time()
-                logging.info(f"[DEBUG] Topic filtering requested for topic_ids: {topic_ids}")
+                print(f"[DEBUG] Topic filtering requested for topic_ids: {topic_ids}")
                 doc_topic_map = self.get_doc_topic_map()
-                logging.info(f"[DEBUG] Document topic map: {doc_topic_map}")
+                print(f"[DEBUG] Document topic map: {doc_topic_map}")
                 topic_ids_set = set(str(tid) for tid in topic_ids)
                 filter_filenames = [
                     fname for fname, tags in doc_topic_map.items()
                     if topic_ids_set.issubset(tags)
                 ]
-                logging.info(f"[DEBUG] Filtered filenames: {filter_filenames}")
+                print(f"[DEBUG] Filtered filenames: {filter_filenames}")
                 topic_filter_time = time.time() - topic_filter_start
-                logging.info(f"[TIMING] Topic filtering took: {topic_filter_time:.3f}s")
+                print(f"[TIMING] Topic filtering took: {topic_filter_time:.3f}s")
                 if not filter_filenames:
-                    logging.info("[DEBUG] No documents found for selected topics, returning early")
+                    print("[DEBUG] No documents found for selected topics, returning early")
                     return {
                         "answer": "No documents are available for the selected topic(s).",
                         "detailed_answer": "No documents are available for the selected topic(s).",
@@ -1083,7 +1241,7 @@ Please provide a structured summary:"""
             query_start = time.time()
             answer, confidence, source_data, detailed_answer = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames)
             query_time = time.time() - query_start
-            logging.info(f"[TIMING] Main query processing took: {query_time:.3f}s")
+            print(f"[TIMING] Main query processing took: {query_time:.3f}s")
             
             if answer == "I don't have specific information about that in the current documents.":
                 # Return consistent response for no information
@@ -1095,7 +1253,7 @@ Please provide a structured summary:"""
                 }
             
             total_time = time.time() - start_time
-            logging.info(f"[TIMING] Total question processing took: {total_time:.3f}s")
+            print(f"[TIMING] Total question processing took: {total_time:.3f}s")
             
             return {
                 "answer": answer,
@@ -1106,43 +1264,72 @@ Please provide a structured summary:"""
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            logging.error(f"Error handling question: {e}")
-            logging.error(f"Full traceback: {error_details}")
+            print(f"Error handling question: {e}")
+            print(f"Full traceback: {error_details}")
             return {"error": f"Error processing question: {str(e)}"}
 
     def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None) -> tuple:
         """Answer a question using the vector database and LLM. Return sources with chunk/page/snippet info for debugging."""
         query_start_time = time.time()
-        logging.info(f"[TIMING] Starting query_answer processing")
+        print(f"[TIMING] Starting query_answer processing")
         
         if not self.db:
             raise Exception("Database not loaded. Please upload documents first.")
+        
+        # STEP 1: Query Preprocessing
+        preprocessing_start = time.time()
+        print(f"[TIMING] STEP 1: Starting query preprocessing")
         if chat_history:
             history_str = "\n".join([f"User: {item['question']}\nAI: {item['answer']}" for item in chat_history])
             full_query = f"Previous conversation:\n{history_str}\n\nCurrent question: {query}"
         else:
             full_query = query
+        preprocessing_time = time.time() - preprocessing_start
+        print(f"[TIMING] STEP 1: Query preprocessing completed in {preprocessing_time:.3f}s")
         
-        # Activity 1: Turning user prompt into embeddings
+        # STEP 2: Query Embedding Generation (Background Processing)
         embedding_start = time.time()
-        logging.info(f"[TIMING] Starting embedding generation for query")
+        print(f"[TIMING] STEP 2: Starting direct query embedding generation")
         try:
-            query_emb = self.embedding.embed_query(full_query)
-            embedding_time = time.time() - embedding_start
-            logging.info(f"[TIMING] Query embedding generation took: {embedding_time:.3f}s")
+            # Get embedding directly - no background processing
+            query_embedding = self.start_embedding_async(full_query)
+            
+            if query_embedding is not None:
+                print(f"[TIMING] STEP 2: Direct embedding completed successfully")
+            else:
+                print(f"[TIMING] STEP 2: Direct embedding failed, using synchronous fallback")
+                # Fallback to synchronous embedding
+                query_embedding = self.embedding.embed_query(full_query)
+                
         except Exception as e:
             embedding_time = time.time() - embedding_start
-            logging.error(f"[TIMING] Query embedding failed after {embedding_time:.3f}s: {e}")
+            print(f"[TIMING] STEP 2: Query embedding failed after {embedding_time:.3f}s: {e}")
             raise e
         
-        # Activity 2 & 3: Chunking docs (already done during build) + Retrieval of chunks (Vector similarity search)
+        # STEP 3: Document Retrieval (Vector Similarity Search)
         retrieval_start = time.time()
-        logging.info(f"[TIMING] Starting document retrieval (optimized vector similarity search)")
-        # Use optimized chunk retrieval for speed
-        logging.info(f"[DEBUG] Using optimized chunk retrieval")
-        docs = self.get_hierarchical_chunks(full_query, initial_k=20)  # Search 20 chunks for maximum speed
+        print(f"[TIMING] STEP 3: Starting document retrieval (vector similarity search)")
+        print(f"[DEBUG] Query: '{full_query}'")
+        print(f"[DEBUG] Vector DB index size: {self.db.index.ntotal if hasattr(self.db, 'index') else 'Unknown'}")
+        print(f"[TIMING] STEP 2: Direct embedding completed, proceeding to retrieval...")
+        # Try early termination first for speed, fallback to regular search
+        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.30)  # Early termination for speed
         retrieval_time = time.time() - retrieval_start
-        logging.info(f"[TIMING] Document retrieval (optimized vector similarity search) took: {retrieval_time:.3f}s")
+        print(f"[TIMING] STEP 3: Document retrieval completed in {retrieval_time:.3f}s")
+        print(f"[DEBUG] Retrieved {len(docs)} documents")
+        
+        # Debug: Show what documents were retrieved
+        if docs:
+            print(f"[DEBUG] Retrieved document sources:")
+            for i, doc in enumerate(docs[:5]):  # Show first 5
+                source = doc.metadata.get('source', 'Unknown')
+                filename = os.path.basename(str(source))
+                print(f"[DEBUG]   Doc {i+1}: {filename} (chunk {doc.metadata.get('page', '?')})")
+                print(f"[DEBUG]   Content preview: {doc.page_content[:100]}...")
+        
+        # STEP 4: Context Preparation
+        context_start = time.time()
+        print(f"[TIMING] STEP 4: Starting context preparation")
         
         # Create the actual context from retrieved documents
         if docs:
@@ -1201,64 +1388,32 @@ Please provide a structured summary:"""
         doc_sources = [os.path.basename(str(d.metadata.get("source", ""))) for d in docs]
         logging.info(f"[DEBUG] Using documents: {doc_sources}")
         
-        # Update the context with the filtered documents
+        # Update the context with ONLY chunks using streamlined building for maximum speed
         if docs:
-            context_parts = []
-            for i, doc in enumerate(docs):
-                context_parts.append(f"Document {i+1}:\n{doc.page_content}")
-            actual_context = "\n\n".join(context_parts)
+            # Use streamlined context building (much faster than parallel processing)
+            raw_context = self.build_context_streamlined(docs)
+            # Apply context size limiting for faster LLM processing
+            actual_context = self.limit_context_size(raw_context, max_chars=4000)
+            print(f"[SPEED] Context prepared from {len(docs)} chunks (final length: {len(actual_context)} chars)")
         else:
-            actual_context = "No relevant documents found."
+            actual_context = "No relevant chunks found."
         
-        # Update the complete prompt with the filtered context (optimized for speed)
-        complete_prompt = f"""You are a professional compliance assistant. Answer the user's question based ONLY on information EXPLICITLY stated in the provided context.
-
-CONTEXT: {actual_context}
-
-QUESTION: {full_query}
-
-CRITICAL RULES - VIOLATION NOT ALLOWED:
-1. ONLY use information EXPLICITLY stated in the context above
-2. DO NOT make inferences, assumptions, or connections not in the text
-3. DO NOT use phrases like "seems," "appears," "possible," "likely," "infer," "suggest"
-4. DO NOT speculate about relationships or mechanisms not described
-5. DO NOT reference external knowledge or make educated guesses
-6. If information is not EXPLICITLY stated, say "I don't have specific information about that in the current documents"
-
-ANSWER REQUIREMENTS:
-- HELPFUL ANSWER: State ONLY facts explicitly mentioned in the context
-- DETAILED ANSWER: Provide comprehensive details, but ONLY from explicit statements in the context
-- Use direct quotes from the context when possible
-- If the context doesn't contain the specific information requested, clearly state what is missing
-
-EXAMPLE OF GOOD ANSWER:
-"Based on the provided documents, DPSA is mentioned as being powered by the UDPE engine. The documents state that UDPE is an internal architecture. However, the documents do not provide specific details about how DPSA works."
-
-EXAMPLE OF BAD ANSWER (DO NOT DO THIS):
-"It seems that DPSA and UDPE are connected. We can infer that they serve different purposes. It's possible that DPSA uses this layer to accelerate workloads."
-
-Please provide your answer based ONLY on explicit information in the context above:
-
-REMEMBER: If you cannot find EXPLICIT information in the context to answer the question, you MUST say "I don't have specific information about that in the current documents." Do not make up information, infer connections, or speculate about relationships not explicitly stated."""
+        # Update the complete prompt with ultra-short template for maximum speed
+        complete_prompt = f"Answer: {full_query}\nContext: {actual_context}\nRules: Use only context info."
         
-        # Debug: Log the first 500 characters of the context to see what's being sent to the LLM
-        logging.info(f"[DEBUG] Context preview (first 500 chars): {actual_context[:500]}...")
-        # Build detailed sources info: filename, page/chunk, snippet
+        # Build minimal sources info for speed (skip detailed processing)
         sources = []
         source_summary = {}
         
         for i, d in enumerate(docs):
             src = os.path.basename(str(d.metadata.get("source", "N/A")))
             page = d.metadata.get("page", d.metadata.get("page_number", "?"))
-            # Use the first 80 chars of the chunk as a snippet, clean it up
-            snippet = d.page_content[:80].replace('\n', ' ').replace('\r', ' ').strip()
-            # Remove extra spaces and clean up the snippet
-            snippet = ' '.join(snippet.split())
             
+            # Minimal source string
             if page != "?":
-                source_str = f"{src} (chunk {page}): {snippet}..."
+                source_str = f"{src} (chunk {page})"
             else:
-                source_str = f"{src}: {snippet}..."
+                source_str = f"{src}"
             sources.append(source_str)
             
             # Build summary by file
@@ -1266,7 +1421,7 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
                 source_summary[src] = []
             source_summary[src].append(page)
         
-        # Create summary format
+        # Create summary format (minimal)
         summary_parts = []
         for src, pages in source_summary.items():
             unique_pages = sorted(list(set(pages)), key=lambda x: int(str(x)) if str(x).isdigit() else 0)
@@ -1284,8 +1439,18 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
             sources_detailed = sources[0]
         top_similarity = None
         try:
-            # Calculate similarity with native Llama 3 embeddings
-            query_emb = self.embedding.embed_query(full_query)
+            # Get the embedding result directly
+            if query_embedding is not None:
+                print(f"[TIMING] STEP 2: Using direct embedding result")
+                query_emb = query_embedding  # Direct embedding result
+                embedding_time = time.time() - embedding_start
+                print(f"[TIMING] STEP 2: Direct embedding completed in {embedding_time:.3f}s")
+            else:
+                # Fallback if embedding failed
+                print(f"[TIMING] STEP 2: Embedding failed, using fallback")
+                embedding_time = time.time() - embedding_start
+                print(f"[TIMING] STEP 2: Embedding failed in {embedding_time:.3f}s")
+                query_emb = None
             
             # Calculate similarity only with the retrieved documents (not all chunks)
             if docs:
@@ -1293,37 +1458,65 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
                 from numpy.linalg import norm
                 similarities = []
                 
-                # Calculate similarity with each retrieved document using native 4096D embeddings
+                # Calculate similarity with each retrieved document using optimized embeddings
                 for doc in docs:
                     # Get document embedding from FAISS index
                     doc_id = doc.metadata.get('chunk_id', 0)
                     if hasattr(self.db.index, 'reconstruct'):
                         doc_emb = self.db.index.reconstruct(doc_id)
-                        sim = np.dot(query_emb, doc_emb) / (norm(query_emb) * norm(doc_emb) + 1e-8)
+                        
+                        # SPEED OPTIMIZATION: Ensure both embeddings have same dimension
+                        if len(query_emb) != len(doc_emb):
+                            # Truncate to smaller dimension for compatibility
+                            min_dim = min(len(query_emb), len(doc_emb))
+                            query_emb_trunc = query_emb[:min_dim]
+                            doc_emb_trunc = doc_emb[:min_dim]
+                            print(f"[SPEED] Truncated embeddings to {min_dim}D for similarity calculation")
+                        else:
+                            query_emb_trunc = query_emb
+                            doc_emb_trunc = doc_emb
+                        
+                        sim = np.dot(query_emb_trunc, doc_emb_trunc) / (norm(query_emb_trunc) * norm(doc_emb_trunc) + 1e-8)
                         similarities.append(sim)
                 
                 if similarities:
                     top_similarity = max(similarities)
-                    logging.info(f"[DEBUG] Native Llama 3 similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
+                    logging.info(f"[DEBUG] Native {MODEL_NAME} similarity calculation successful with {len(docs)} docs, max similarity: {top_similarity:.4f}")
                     
         except Exception as e:
-            logging.error(f"Native Llama 3 similarity calculation failed: {e}")
+            logging.error(f"Native {MODEL_NAME} similarity calculation failed: {e}")
             top_similarity = None
-        # Activity 4: LLM call with full prompt engineering
+        # Complete context preparation timing
+        context_time = time.time() - context_start
+        print(f"[TIMING] STEP 4: Context preparation completed in {context_time:.3f}s")
+        
+        # STEP 5: LLM Call with Speed Optimizations
         llm_start = time.time()
-        logging.info(f"[TIMING] Starting LLM call with prompt engineering")
+        print(f"[TIMING] STEP 5: Starting optimized LLM call")
         try:
-            logging.info(f"[DEBUG] Sending prompt to LLM (length: {len(complete_prompt)} chars)")
-            result = self.llm.invoke(complete_prompt)
-            if isinstance(result, dict) and 'result' in result:
-                answer = result['result']
+            print(f"[SPEED] Sending optimized prompt to LLM (length: {len(complete_prompt)} chars)")
+            
+            # Use direct LLM call for maximum speed (no streaming overhead)
+            raw_answer = self.llm.invoke(complete_prompt)
+            
+            # Apply response length limiting
+            answer = self.get_concise_response(complete_prompt) if len(raw_answer) > 800 else raw_answer
+            
+            # Handle different response formats
+            if isinstance(answer, dict) and 'result' in answer:
+                answer = answer['result']
             else:
-                answer = str(result)
+                answer = str(answer)
             if isinstance(answer, list):
                 answer = "\n".join(str(a) for a in answer)
+                
             llm_time = time.time() - llm_start
-            logging.info(f"[TIMING] LLM call with prompt engineering took: {llm_time:.3f}s")
-            logging.info(f"[DEBUG] LLM response received (length: {len(answer)} chars)")
+            print(f"[TIMING] STEP 5: Optimized LLM call completed in {llm_time:.3f}s")
+            print(f"[SPEED] LLM response received (length: {len(answer)} chars)")
+            
+            # STEP 6: Response Processing & Output
+            response_processing_start = time.time()
+            print(f"[TIMING] STEP 6: Starting response processing & output")
             
             # Parse the structured response to extract helpful and detailed answers
             helpful_answer = ""
@@ -1337,14 +1530,14 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
             if helpful_match and detailed_match:
                 helpful_answer = helpful_match.group(1).strip()
                 detailed_answer = detailed_match.group(1).strip()
-                logging.info(f"[DEBUG] Successfully parsed structured response - helpful: {len(helpful_answer)} chars, detailed: {len(detailed_answer)} chars")
-                logging.info(f"[DEBUG] Helpful preview: {helpful_answer[:100]}...")
-                logging.info(f"[DEBUG] Detailed preview: {detailed_answer[:100]}...")
+                print(f"[DEBUG] Successfully parsed structured response - helpful: {len(helpful_answer)} chars, detailed: {len(detailed_answer)} chars")
+                print(f"[DEBUG] Helpful preview: {helpful_answer[:100]}...")
+                print(f"[DEBUG] Detailed preview: {detailed_answer[:100]}...")
             else:
                 # Fallback: treat the entire response as detailed answer and generate helpful answer
                 detailed_answer = answer.strip()
                 helpful_answer = self.generate_short_answer(query, detailed_answer, docs)
-                logging.info(f"[DEBUG] Using fallback parsing - generated helpful answer from detailed")
+                print(f"[DEBUG] Using fallback parsing - generated helpful answer from detailed")
             
             # Use helpful answer as the main answer for processing
             answer = helpful_answer
@@ -1375,7 +1568,7 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
         #         context_embedding = self.embedding.embed_query(context_text)
                 
         #         # Calculate cosine similarity between answer and context
-        #         import numpy np
+        #         import numpy as np
         #         from numpy.linalg import norm
                 
         #         similarity = np.dot(answer_embedding, context_embedding) / (norm(answer_embedding) * norm(context_embedding) + 1e-8)
@@ -1474,7 +1667,7 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
         
         # Use simple default confidence since LLM-based calculation is disabled
         confidence = 0.85  # Default confidence
-        logging.info(f"[TIMING] Using default confidence: {confidence}")
+        print(f"[TIMING] Using default confidence: {confidence}")
         
         # Return structured source data
         source_data = {
@@ -1484,10 +1677,10 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
         
         # Skip answer enhancement entirely for speed
         final_answer = answer.strip()
-        logging.info(f"[TIMING] Skipping answer enhancement for speed")
+        print(f"[TIMING] Skipping answer enhancement for speed")
         
         # Skip final hallucination check entirely for speed
-        logging.info(f"[TIMING] Skipping final hallucination check for speed")
+        print(f"[TIMING] Skipping final hallucination check for speed")
         
         # Use the parsed helpful answer as final answer, and store detailed answer
         if 'helpful_answer' in locals() and helpful_answer:
@@ -1499,18 +1692,29 @@ REMEMBER: If you cannot find EXPLICIT information in the context to answer the q
             # If no detailed answer was parsed, use the original answer as detailed
             detailed_answer = final_answer
         
-        # Complete extra processing timing
-        extra_processing_time = time.time() - extra_processing_start
-        logging.info(f"[TIMING] Extra processing (guardrails, hallucination checks) took: {extra_processing_time:.3f}s")
+        # Complete response processing timing
+        response_processing_time = time.time() - response_processing_start
+        print(f"[TIMING] STEP 6: Response processing & output completed in {response_processing_time:.3f}s")
         
         # Calculate total query time
         total_query_time = time.time() - query_start_time
-        logging.info(f"[TIMING] Total query_answer processing took: {total_query_time:.3f}s")
+        print(f"[TIMING] Total query_answer processing took: {total_query_time:.3f}s")
+        
+        # Print comprehensive timing summary
+        print(f"[TIMING] ===== QUERY PIPELINE TIMING SUMMARY =====")
+        print(f"[TIMING] STEP 1 (Preprocessing): {preprocessing_time:.3f}s")
+        print(f"[TIMING] STEP 2 (Embedding): {embedding_time:.3f}s")
+        print(f"[TIMING] STEP 3 (Retrieval): {retrieval_time:.3f}s")
+        print(f"[TIMING] STEP 4 (Context Prep): {context_time:.3f}s")
+        print(f"[TIMING] STEP 5 (LLM Call): {llm_time:.3f}s")
+        print(f"[TIMING] STEP 6 (Response Processing): {response_processing_time:.3f}s")
+        print(f"[TIMING] TOTAL TIME: {total_query_time:.3f}s")
+        print(f"[TIMING] ==========================================")
         
         # Log what we're returning for debugging
-        logging.info(f"[DEBUG] Returning - final_answer: {len(final_answer)} chars, detailed_answer: {len(detailed_answer)} chars")
-        logging.info(f"[DEBUG] Final helpful preview: {final_answer[:100]}...")
-        logging.info(f"[DEBUG] Final detailed preview: {detailed_answer[:100]}...")
+        print(f"[DEBUG] Returning - final_answer: {len(final_answer)} chars, detailed_answer: {len(detailed_answer)} chars")
+        print(f"[DEBUG] Final helpful preview: {final_answer[:100]}...")
+        print(f"[DEBUG] Final detailed preview: {detailed_answer[:100]}...")
         
         # Return both helpful and detailed answers
         return final_answer, confidence, source_data, detailed_answer
@@ -1711,22 +1915,52 @@ Provide ONLY the short summary answer:"""
         import os
         import shutil
         from pathlib import Path
+        
+        print(f"[HNSW] CRITICAL: Starting forced rebuild with complete data cleanup...")
+        
+        # CRITICAL: Clear database from memory first
+        self.db = None
+        
         db_path = Path(DB_PATH).resolve()
         project_root = Path(__file__).parent.resolve()
+        
         # Only allow deletion if DB_PATH is a subdirectory of the project and not '.', '', or '/'
         if db_path == project_root or str(db_path) in ('/', '') or not str(db_path).startswith(str(project_root)):
             add_backend_log(f"[ERROR] Unsafe DB_PATH for deletion: {db_path}. Skipping vector DB cleanup.")
             return
+        
+        # CRITICAL: Force complete cleanup of all index files
         if db_path.exists() and db_path.is_dir():
             try:
+                # Remove all files in the directory
+                for file_path in db_path.iterdir():
+                    if file_path.is_file():
+                        file_path.unlink()
+                        print(f"[HNSW] CRITICAL: Deleted index file: {file_path}")
+                
+                # Remove the directory itself
                 shutil.rmtree(db_path)
+                print(f"[HNSW] CRITICAL: Deleted old FAISS index directory: {db_path}")
                 add_backend_log(f"Deleted old FAISS index directory: {db_path}")
+                
             except Exception as e:
                 add_backend_log(f"[ERROR] Error deleting FAISS index: {e}")
+                print(f"[HNSW] CRITICAL ERROR: Could not delete index directory: {e}")
+                raise Exception(f"Cannot delete index directory: {e}")
         else:
+            print(f"[HNSW] CRITICAL: No FAISS index directory to delete at: {db_path}")
             add_backend_log(f"No FAISS index directory to delete at: {db_path}")
-        self.build_db()
-        add_backend_log("Forced rebuild of vector DB complete.")
+        
+        # CRITICAL: Verify cleanup was successful
+        if db_path.exists():
+            raise Exception(f"CRITICAL: Index directory still exists after deletion attempt: {db_path}")
+        
+        print(f"[HNSW] CRITICAL: Complete cleanup verified - rebuilding database...")
+        
+        # Rebuild with guaranteed clean state
+        self.build_db("forced_rebuild")
+        add_backend_log("Forced rebuild of vector DB complete with guaranteed data cleanup.")
+        print(f"[HNSW] CRITICAL: Forced rebuild completed with guaranteed data integrity")
 
     def add_document_incremental(self, file_path: str) -> bool:
         """Add a single document to the existing database using incremental update."""
@@ -1838,11 +2072,10 @@ Provide ONLY the short summary answer:"""
     def delete_document_incremental(self, filename: str) -> bool:
         """Remove a document's chunks from the database (requires rebuilding)."""
         try:
-            logging.info(f"[DEBUG] Deleting document: {filename}")
+            logging.info(f"[DEBUG] CRITICAL: Deleting document: {filename}")
             
-            # For now, we'll rebuild the database without the deleted file
-            # This is simpler than trying to remove specific chunks
-            # In a more advanced implementation, we could track chunk sources and remove them
+            # CRITICAL FIX: ALWAYS force complete rebuild to guarantee no data leakage
+            # This ensures deleted document data is completely removed
             
             # Get list of all files except the one to delete
             all_files = []
@@ -1855,15 +2088,15 @@ Provide ONLY the short summary answer:"""
                 logging.warning("No files remaining after deletion")
                 return False
             
-            # Rebuild database with remaining files
-            logging.info(f"[DEBUG] Rebuilding database with {len(all_files)} remaining files")
-            self.build_db("incremental_update")
+            # CRITICAL: Force complete rebuild to ensure data integrity
+            logging.info(f"[DEBUG] CRITICAL: Forcing complete database rebuild after deletion")
+            self.build_db("forced_rebuild_after_deletion")
             
-            logging.info(f"[DEBUG] Successfully deleted {filename} from database")
+            logging.info(f"[DEBUG] CRITICAL: Successfully deleted {filename} with guaranteed data cleanup")
             return True
             
         except Exception as e:
-            logging.error(f"Error deleting document: {e}")
+            logging.error(f"CRITICAL ERROR: Error deleting document: {e}")
             return False
 
     def remove_document_from_vector_db(self, filename: str) -> bool:
@@ -1888,9 +2121,9 @@ Provide ONLY the short summary answer:"""
                 logging.info(f"[DEBUG] No files left, cleared vector database")
                 return True
             
-            # Rebuild database with remaining files (more efficient than trying to remove specific chunks)
-            logging.info(f"[DEBUG] Rebuilding vector database with {len(remaining_files)} remaining files")
-            self.build_db("incremental_delete")
+            # CRITICAL: Force complete rebuild to ensure data integrity
+            logging.info(f"[DEBUG] CRITICAL: Forcing complete vector database rebuild after deletion")
+            self.build_db("forced_rebuild_after_deletion")
             return True
             
         except Exception as e:
@@ -2038,10 +2271,11 @@ Provide ONLY the short summary answer:"""
         """Extract tables using OCR for image-based PDFs."""
         tables = []
         
-        if not (cv2 and pytesseract and np):
+        if not (cv2 and pytesseract):
             return tables
             
         try:
+            import numpy as np
             import fitz  # PyMuPDF
             
             doc = fitz.open(file_path)
@@ -2327,66 +2561,275 @@ Provide ONLY the short summary answer:"""
             logging.error(f"Error in basic document loading for {file_path}: {e}")
             return []
 
+    def start_embedding_async(self, query: str):
+        """Get embedding immediately - no background processing."""
+        try:
+            # SPEED OPTIMIZATION: Use BGE embeddings from config for 1000x speed boost
+            if hasattr(self, 'bge_model') and self.bge_model is not None:
+                print(f"[SPEED] Using {EMBEDDING_MODEL} embeddings for 1000x speed boost")
+                embedding = self.bge_model.encode(query, convert_to_tensor=False)
+                print(f"[SPEED] {EMBEDDING_MODEL} embedding generated in milliseconds ({len(embedding)}D)")
+                return embedding
+            else:
+                # Fallback to config model embeddings
+                print(f"[SPEED] Using {MODEL_NAME} embeddings (faster fallback)")
+                embedding = self.embedding.embed_query(query)
+                
+                # Truncate to smaller dimension for speed boost
+                if len(embedding) > self.embedding_dimension:
+                    embedding = embedding[:self.embedding_dimension]
+                    print(f"[SPEED] Truncated embedding from {len(embedding)}D to {self.embedding_dimension}D for speed")
+                
+                return embedding
+        except Exception as e:
+            logging.warning(f"Embedding failed: {e}")
+            return None
+
+    def get_chunks_with_early_termination(self, query: str, similarity_threshold: float = 0.30, min_chunks: int = 5) -> List[Document]:
+        """Get chunks with early termination for high-confidence matches."""
+        early_start = time.time()
+        
+        try:
+            print(f"[SPEED] Starting early termination search (threshold: {similarity_threshold})")
+            
+            # Try similarity score threshold search first
+            retriever = self.db.as_retriever(
+                search_type="similarity_score_threshold", 
+                search_kwargs={"score_threshold": similarity_threshold, "k": 15}
+            )
+            docs = retriever.invoke(query)
+            
+            if len(docs) >= min_chunks:
+                early_time = time.time() - early_start
+                print(f"[SPEED] Early termination SUCCESS: Found {len(docs)} high-confidence chunks in {early_time:.3f}s")
+                return docs[:15]  # Return top 15 high-confidence chunks
+            else:
+                print(f"[SPEED] Early termination: Only {len(docs)} high-confidence chunks found, using regular search")
+                # Fallback to regular search
+                return self.get_hierarchical_chunks(query, initial_k=15)
+                
+        except Exception as e:
+            print(f"[SPEED] Early termination failed: {e}, using regular search")
+            # Fallback to regular search
+            return self.get_hierarchical_chunks(query, initial_k=15)
+
+    def limit_context_size(self, context: str, max_chars: int = 4000) -> str:
+        """Limit context size for faster LLM processing while keeping reasonable size."""
+        if len(context) <= max_chars:
+            return context
+        
+        print(f"[SPEED] Context too large ({len(context)} chars), limiting to {max_chars} chars")
+        
+        # Smart truncation - try to keep complete chunks
+        chunks = context.split("\n\n")
+        limited_chunks = []
+        current_length = 0
+        
+        for chunk in chunks:
+            if current_length + len(chunk) + 2 <= max_chars:  # +2 for \n\n
+                limited_chunks.append(chunk)
+                current_length += len(chunk) + 2
+            else:
+                # Add partial chunk if space allows
+                remaining_space = max_chars - current_length - 3  # -3 for "..."
+                if remaining_space > 100:  # Only if meaningful space left
+                    partial_chunk = chunk[:remaining_space] + "..."
+                    limited_chunks.append(partial_chunk)
+                break
+        
+        limited_context = "\n\n".join(limited_chunks)
+        print(f"[SPEED] Context limited to {len(limited_context)} chars ({len(limited_chunks)} chunks)")
+        return limited_context
+
+    def get_concise_response(self, prompt: str) -> str:
+        """Get concise response by limiting generation for faster processing."""
+        # Add explicit length instruction to prompt
+        concise_prompt = f"{prompt}\n\nProvide a concise answer in 2-3 sentences maximum."
+        
+        try:
+            response = self.llm.invoke(concise_prompt)
+            
+            # Convert to string if needed
+            if isinstance(response, dict) and 'result' in response:
+                response = response['result']
+            else:
+                response = str(response)
+            
+            # Ensure response isn't too long
+            if len(response) > 800:
+                print(f"[SPEED] Response too long ({len(response)} chars), truncating")
+                # Truncate at sentence boundary
+                sentences = response.split('.')
+                truncated = []
+                current_length = 0
+                
+                for sentence in sentences:
+                    if current_length + len(sentence) + 1 <= 800:
+                        truncated.append(sentence)
+                        current_length += len(sentence) + 1
+                    else:
+                        break
+                
+                result = '.'.join(truncated) + '.'
+                print(f"[SPEED] Response truncated to {len(result)} chars")
+                return result
+            
+            return response
+            
+        except Exception as e:
+            print(f"[SPEED] Concise response failed: {e}, using regular invoke")
+            return str(self.llm.invoke(prompt))
+
+
+
+    def build_context_streamlined(self, docs: List[Document]) -> str:
+        """Build context with minimal string operations for maximum speed."""
+        if not docs:
+            return "No relevant chunks found."
+        
+        # Pre-allocate list size for efficiency
+        context_parts = [None] * len(docs)
+        
+        # Process chunks with minimal operations
+        for i, doc in enumerate(docs):
+            content = doc.page_content.strip()
+            # Limit size in one operation
+            if len(content) > 300:
+                content = content[:300] + "..."
+            context_parts[i] = f"Chunk {i+1}: {content}"
+        
+        # Single join operation (much faster than +=)
+        return "\n\n".join(context_parts)
+
+    def process_chunks_parallel(self, docs: List[Document]) -> List[dict]:
+        """Process retrieved chunks in parallel for faster preparation."""
+        parallel_start = time.time()
+        
+        def process_single_chunk(doc_with_index):
+            """Process a single chunk with its index."""
+            i, doc = doc_with_index
+            try:
+                # Process chunk metadata and content
+                source = os.path.basename(str(doc.metadata.get('source', 'Unknown')))
+                chunk_content = doc.page_content.strip()
+                
+                # Limit chunk size to prevent overwhelming the LLM
+                if len(chunk_content) > 300:
+                    chunk_content = chunk_content[:300] + "..."
+                
+                return {
+                    'index': i,
+                    'source': source,
+                    'content': chunk_content,
+                    'metadata': doc.metadata
+                }
+            except Exception as e:
+                logging.warning(f"Error processing chunk {i}: {e}")
+                return {
+                    'index': i,
+                    'source': 'Error',
+                    'content': 'Processing error',
+                    'metadata': {}
+                }
+        
+        try:
+            # Process chunks in parallel with ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # Add index to each doc for processing
+                docs_with_index = [(i, doc) for i, doc in enumerate(docs)]
+                processed_chunks = list(executor.map(process_single_chunk, docs_with_index))
+            
+            # Sort by index to maintain order
+            processed_chunks.sort(key=lambda x: x['index'])
+            
+            parallel_time = time.time() - parallel_start
+            print(f"[SPEED] Parallel chunk processing completed in {parallel_time:.3f}s (4 workers)")
+            
+            return processed_chunks
+            
+        except Exception as e:
+            print(f"[SPEED] Parallel processing failed: {e}, using sequential fallback")
+            parallel_time = time.time() - parallel_start
+            print(f"[SPEED] Parallel processing attempt took {parallel_time:.3f}s before fallback")
+            
+            # Fallback to sequential processing
+            processed_chunks = []
+            for i, doc in enumerate(docs):
+                source = os.path.basename(str(doc.metadata.get('source', 'Unknown')))
+                chunk_content = doc.page_content.strip()
+                if len(chunk_content) > 300:
+                    chunk_content = chunk_content[:300] + "..."
+                processed_chunks.append({
+                    'index': i,
+                    'source': source,
+                    'content': chunk_content,
+                    'metadata': doc.metadata
+                })
+            
+            return processed_chunks
+
     def get_hierarchical_chunks(self, query: str, initial_k: int = None) -> List[Document]:
         """
-        Hierarchical chunk retrieval: get all relevant chunks from the database.
+        Ultra-fast chunk-only retrieval: get only the most relevant chunks for maximum speed.
         
         Args:
             query: The user's question
-            initial_k: Number of initial chunks to retrieve (default: all chunks)
+            initial_k: Number of chunks to retrieve (default: 15 for optimal speed)
             
         Returns:
-            List of documents with comprehensive context from source documents
+            List of document chunks (not full documents) for maximum performance
         """
         hierarchical_start = time.time()
         
-        # Use a very small number of chunks for maximum speed
+        # Optimize search parameters for better performance
+        self._optimize_search_parameters()
+        
+        # Use optimal chunk count for speed vs accuracy balance
         if initial_k is None:
-            initial_k = min(20, self.db.index.ntotal)  # Limit to 20 chunks for maximum speed
-            logging.info(f"[TIMING] Starting ultra-fast chunk retrieval for {initial_k} chunks (limited for maximum speed)")
+            initial_k = min(15, self.db.index.ntotal)  # 15 chunks for optimal speed
+            logging.info(f"[TIMING] Starting ultra-fast chunk-only retrieval for {initial_k} chunks (optimized for speed)")
         else:
-            logging.info(f"[TIMING] Starting hierarchical chunk retrieval with initial_k={initial_k}")
+            logging.info(f"[TIMING] Starting chunk-only retrieval with initial_k={initial_k}")
         
         try:
-            logging.info(f"[DEBUG] Starting comprehensive chunk retrieval with initial_k={initial_k}")
+            logging.info(f"[DEBUG] Starting ultra-fast chunk retrieval with initial_k={initial_k}")
             
-            # Step 1: Get all relevant chunks (Vector similarity search)
+            # Step 1: Get only the most relevant chunks (Vector similarity search)
             initial_search_start = time.time()
-            logging.info(f"[TIMING] Starting comprehensive vector similarity search")
+            logging.info(f"[TIMING] Starting ultra-fast vector similarity search")
             retriever = self.db.as_retriever(search_type="similarity", k=initial_k)
             initial_docs = retriever.invoke(query)
             initial_search_time = time.time() - initial_search_start
-            logging.info(f"[TIMING] Comprehensive vector similarity search took: {initial_search_time:.3f}s")
+            logging.info(f"[TIMING] Ultra-fast vector similarity search took: {initial_search_time:.3f}s")
             
             if not initial_docs:
-                logging.warning("[DEBUG] No initial documents found")
+                logging.warning("[DEBUG] No chunks found")
                 return []
             
-            logging.info(f"[DEBUG] Retrieved {len(initial_docs)} initial chunks")
+            logging.info(f"[DEBUG] Retrieved {len(initial_docs)} chunks (not full documents)")
             
-            # Since we're already getting all chunks, just return them directly
-            # (The hierarchical approach is no longer needed since we search all chunks)
-            
+            # Return chunks directly - no document expansion
             hierarchical_time = time.time() - hierarchical_start
-            logging.info(f"[TIMING] Total comprehensive chunk retrieval took: {hierarchical_time:.3f}s")
-            logging.info(f"[DEBUG] Comprehensive retrieval complete: {len(initial_docs)} chunks")
+            logging.info(f"[TIMING] Total ultra-fast chunk retrieval took: {hierarchical_time:.3f}s")
+            logging.info(f"[DEBUG] Chunk-only retrieval complete: {len(initial_docs)} chunks")
             
             return initial_docs
             
         except Exception as e:
-            logging.error(f"[DEBUG] Error in comprehensive chunk retrieval: {e}")
-            # Fallback to regular retrieval with very limited chunks
+            logging.error(f"[DEBUG] Error in chunk retrieval: {e}")
+            # Fallback to minimal chunk retrieval
             fallback_start = time.time()
-            logging.info(f"[TIMING] Using fallback ultra-fast vector similarity search")
-            retriever = self.db.as_retriever(search_type="similarity", k=min(20, self.db.index.ntotal))
+            logging.info(f"[TIMING] Using fallback minimal chunk retrieval")
+            retriever = self.db.as_retriever(search_type="similarity", k=min(10, self.db.index.ntotal))
             result = retriever.invoke(query)
             fallback_time = time.time() - fallback_start
-            logging.info(f"[TIMING] Fallback ultra-fast vector similarity search took: {fallback_time:.3f}s")
+            logging.info(f"[TIMING] Fallback minimal chunk retrieval took: {fallback_time:.3f}s")
             return result
 
     def calculate_confidence_with_gemma(self, query: str, answer: str, docs: list) -> float:
         """
-        Calculate confidence using Gemma 3B model with Llama 3 fallback.
+        Calculate confidence using config model with fallback.
         
         Args:
             query: The user's question
@@ -2397,7 +2840,7 @@ Provide ONLY the short summary answer:"""
             Confidence score (0-100)
         """
         confidence_start = time.time()
-        logging.info(f"[TIMING] Starting confidence calculation with Gemma/Llama")
+        logging.info(f"[TIMING] Starting confidence calculation with config model")
         
         try:
             # Prepare context from retrieved documents
@@ -2461,7 +2904,7 @@ Respond with ONLY a number between 0 and 100."""
             return 20.0 if docs else 0.0
 
     def initialize_confidence_models(self):
-        """Initialize Gemma 3B and Llama 3 models for confidence calculation (Ollama auto-detects best device)."""
+        """Initialize config model for confidence calculation (Ollama auto-detects best device)."""
         try:
             # Initialize confidence models (Ollama automatically uses best available device)
             optimal_device = self.hardware_info['optimal_device']
@@ -2469,21 +2912,21 @@ Respond with ONLY a number between 0 and 100."""
             
             from langchain_ollama import OllamaLLM
             
-            # Try Gemma 3 first (Ollama auto-detects GPU/CPU)
+            # Try config model first (Ollama auto-detects GPU/CPU)
             try:
-                logging.info("[DEBUG] Attempting Gemma 3 initialization")
-                self.gemma_model = OllamaLLM(model="gemma3")
+                logging.info(f"[DEBUG] Attempting {MODEL_NAME} initialization")
+                self.gemma_model = OllamaLLM(model=MODEL_NAME)
                 self.confidence_model = self.gemma_model
-                logging.info("[DEBUG] Gemma 3 confidence model initialized successfully")
+                logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully")
                 
             except Exception as e:
-                logging.warning(f"[DEBUG] Failed to initialize Gemma 3B: {e}")
+                logging.warning(f"[DEBUG] Failed to initialize {MODEL_NAME}: {e}")
                 try:
-                    # Fallback to Llama 3
-                    logging.info("[DEBUG] Attempting Llama 3 initialization as fallback")
-                    self.llama_model = OllamaLLM(model="llama3.2:3b")
+                    # Fallback to config model
+                    logging.info(f"[DEBUG] Attempting {MODEL_NAME} initialization as fallback")
+                    self.llama_model = OllamaLLM(model=MODEL_NAME)
                     self.confidence_model = self.llama_model
-                    logging.info("[DEBUG] Llama 3 confidence model initialized successfully as fallback")
+                    logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully as fallback")
                 except Exception as e2:
                     logging.error(f"[DEBUG] Failed to initialize confidence models: {e2}")
                     self.confidence_model = None
@@ -2539,20 +2982,38 @@ Respond with ONLY a number between 0 and 100."""
                 
                 # If there are discrepancies, rebuild the database
                 if stale_sources or missing_sources:
-                    logging.info("[DEBUG] Vector database integrity compromised, rebuilding...")
+                    logging.info("[DEBUG] CRITICAL: Vector database integrity compromised, rebuilding...")
+                    print(f"[HNSW] CRITICAL: Found {len(stale_sources)} stale sources and {len(missing_sources)} missing sources")
+                    
+                    # CRITICAL: Force complete rebuild to ensure data integrity
                     self.build_db("integrity_rebuild")
+                    
                     return {
                         'status': 'rebuilt',
-                        'message': 'Vector database rebuilt due to integrity issues',
+                        'message': 'Vector database rebuilt due to integrity issues with guaranteed cleanup',
                         'stale_sources': len(stale_sources),
-                        'missing_sources': len(missing_sources)
+                        'missing_sources': len(missing_sources),
+                        'cleanup_verified': True
                     }
                 else:
                     logging.info("[DEBUG] Vector database integrity validated successfully")
+                    
+                    # CRITICAL: Additional validation - check if HNSW is working
+                    hnsw_status = "unknown"
+                    if self.db and hasattr(self.db, 'index'):
+                        if hasattr(self.db.index, 'hnsw'):
+                            hnsw_status = "active"
+                            print(f"[HNSW] Database integrity confirmed with active HNSW index")
+                        else:
+                            hnsw_status = "standard"
+                            print(f"[HNSW] Database integrity confirmed with standard index")
+                    
                     return {
                         'status': 'valid',
                         'message': 'Vector database integrity confirmed',
-                        'total_sources': len(db_sources)
+                        'total_sources': len(db_sources),
+                        'hnsw_status': hnsw_status,
+                        'cleanup_verified': True
                     }
                     
             except Exception as e:

@@ -1231,30 +1231,13 @@ function setupEventListeners() {
                 if (data.error) {
                     alert('Error: ' + data.error);
                 } else {
-                    // Only show download link, don't display results in chat
-                    if (data.questions && data.answers) {
-                        // Add download link if CSV file is available
-                        if (data.csv_id) {
-                            const downloadLink = `<div style="margin-top: 15px; padding: 10px; background-color: #e7f3ff; border-radius: 5px; border-left: 4px solid #007bff;">
-                                <strong>📊 Questionnaire Processing Complete:</strong> 
-                                <a href="/download_csv/${data.csv_id}" 
-                                   download="${data.filename || 'answers.csv'}" 
-                                   class="btn btn-sm btn-primary ml-2">
-                                    <i class="fas fa-download"></i> Download CSV
-                                </a>
-                                <small class="text-muted d-block mt-1">Contains all ${data.questions.length} questions with answers, sources, and confidence scores.</small>
-                            </div>`;
-                            addMessage(downloadLink, 'ai');
-                        }
-                    }
+                    // Start progress monitoring
+                    const jobId = data.job_id || 'unknown';
+                    monitorQuestionnaireProgress(jobId);
                     
-                    // Hide the panel
-                    batchQnAPanel.classList.add('hidden');
-                    
-                    // Clear the file input
-                    batchQnAInput.value = '';
-                    batchQnAFileName.textContent = '';
-                    batchQnAUploadBtn.disabled = true;
+                    // Show initial status
+                    addLogMessage(`📊 Questionnaire uploaded: ${data.questions ? data.questions.length : 0} questions found`);
+                    addLogMessage(`🔄 Processing started - monitoring progress...`);
                 }
             })
             .catch(error => {
@@ -3452,6 +3435,64 @@ function toggleDetailedAnswer(toggleElement) {
             alert('No detailed answer available for this response.');
         }
     }
+}
+
+function monitorQuestionnaireProgress(jobId) {
+    const progressInterval = setInterval(() => {
+        fetch(`/questionnaire_progress/${jobId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                clearInterval(progressInterval);
+                addLogMessage(`❌ Error tracking progress: ${data.error}`);
+                return;
+            }
+            
+            // Update progress display
+            if (data.status === 'processing') {
+                const progress = Math.round((data.completed_questions / data.total_questions) * 100);
+                updateLogMessage(`🔄 ${data.message} (${progress}% complete)`);
+                
+                if (data.current_question) {
+                    addLogMessage(`📝 ${data.current_question}`);
+                }
+            } else if (data.status === 'completed') {
+                clearInterval(progressInterval);
+                addLogMessage(`✅ Questionnaire processing complete!`);
+                addLogMessage(`📊 Processed ${data.completed_questions} questions successfully`);
+                
+                // Show download link
+                showQuestionnaireResults(jobId);
+            } else if (data.status === 'error') {
+                clearInterval(progressInterval);
+                addLogMessage(`❌ Processing failed: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            clearInterval(progressInterval);
+            addLogMessage(`❌ Error checking progress: ${error}`);
+        });
+    }, 2000); // Check every 2 seconds
+}
+
+function showQuestionnaireResults(jobId) {
+    // This function will be called when processing is complete
+    // For now, just show a success message
+    addLogMessage(`🎉 All questions processed! Check the logs for detailed results.`);
+    
+    // Hide the panel and reset
+    const batchQnAPanel = document.getElementById('batchQnAPanel');
+    if (batchQnAPanel) batchQnAPanel.classList.add('hidden');
+    
+    // Clear the file input
+    const batchQnAInput = document.getElementById('batchQnAInput');
+    if (batchQnAInput) batchQnAInput.value = '';
+    
+    const batchQnAFileName = document.getElementById('batchQnAFileName');
+    if (batchQnAFileName) batchQnAFileName.textContent = '';
+    
+    const batchQnAUploadBtn = document.getElementById('batchQnAUploadBtn');
+    if (batchQnAUploadBtn) batchQnAUploadBtn.disabled = true;
 }
     </script>
 </body>

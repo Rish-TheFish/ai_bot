@@ -2,6 +2,26 @@
 
 echo "🚀 Starting FAQ Bot services..."
 
+# Function to get model name from config
+get_model_name() {
+    if [ -f "Logistics_Files/config_details.py" ]; then
+        # Extract MODEL_NAME from Python config file
+        MODEL_NAME=$(grep "MODEL_NAME = " Logistics_Files/config_details.py | sed 's/.*MODEL_NAME = "\([^"]*\)".*/\1/')
+        echo "$MODEL_NAME"
+    elif [ -f "config_details.py" ]; then
+        # Extract MODEL_NAME from Python config file (alternative location)
+        MODEL_NAME=$(grep "MODEL_NAME = " config_details.py | sed 's/.*MODEL_NAME = "\([^"]*\)".*/\1/')
+        echo "$MODEL_NAME"
+    else
+        # Fallback to default model
+        echo "qwen3:4b"
+    fi
+}
+
+# Get the model name to use
+MODEL_NAME=$(get_model_name)
+echo "📋 Using model: $MODEL_NAME"
+
 # Set up PostgreSQL PATH
 echo "Setting up PostgreSQL environment..."
 export PATH="/usr/local/bin:/usr/lib/postgresql/*/bin:$PATH"
@@ -204,16 +224,16 @@ if ! kill -0 $OLLAMA_PID 2>/dev/null; then
     exit 1
 fi
 
-# Pull the Llama 3 Instruct model
-echo "Pulling Llama 3 Instruct model..."
-ollama pull llama3:instruct
+# Pull the configured model
+echo "Pulling $MODEL_NAME model..."
+ollama pull $MODEL_NAME
 
 # Verify the model is available
 echo "Verifying model is ready..."
-if ollama list | grep -q "llama3:instruct"; then
-    echo "✓ Llama 3 Instruct model is ready"
+if ollama list | grep -q "$MODEL_NAME"; then
+    echo "✓ $MODEL_NAME model is ready"
 else
-    echo "✗ Failed to load Llama 3 Instruct model"
+    echo "✗ Failed to load $MODEL_NAME model"
     exit 1
 fi
 
@@ -267,7 +287,7 @@ echo "🎯 SERVICE STATUS SUMMARY"
 echo "==================================================="
 echo "✅ PostgreSQL: Running on localhost:5432"
 echo "✅ Ollama: Running on localhost:11434"
-echo "✅ Llama 3 Model: Loaded and ready"
+echo "✅ $MODEL_NAME Model: Loaded and ready"
 echo "✅ Flask App: Running on localhost:5000"
 echo "✅ Database: chat_history database ready"
 echo "==================================================="
