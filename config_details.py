@@ -1,6 +1,6 @@
-MODEL_NAME = "mistral"
+MODEL_NAME = "cogito:3b"
 DOCS_PATH = "./your_docs"
 DB_PATH = "./your_db"
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 UPLOAD_PIN = "1964"
 POSTGRES_PASSWORD = "321Calvin123"

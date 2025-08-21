@@ -12,10 +12,10 @@ from langchain_core.documents import Document
 
 # Handle imports for both running from root and from Logistics_Files directory
 try:
-    from Logistics_Files.config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME
+    from Logistics_Files.config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME, EMBEDDING_MODEL
 except ImportError:
     try:
-        from config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME
+        from config_details import DOCS_PATH, DB_PATH, POSTGRES_PASSWORD, MODEL_NAME, EMBEDDING_MODEL
     except ImportError:
         raise ImportError("Could not import config_details. Make sure you're running from the correct directory.")
 
@@ -70,8 +70,8 @@ def build_db() -> None:
             logging.warning("⚠️ No documents loaded.")
             return
         # Use optimal chunking for FAQ bot quality
-        chunk_size = 192    # Good size for FAQ bots
-        chunk_overlap = 54  # 28% overlap for continuity
+        chunk_size = 384    # Increased size for better accuracy
+        chunk_overlap = 108  # 28% overlap for continuity
         
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
@@ -95,17 +95,14 @@ def build_db() -> None:
         )
         chunks = splitter.split_documents(all_docs)
         
-        # Initialize embeddings through Ollama using config model
-        logging.info(f"Initializing {MODEL_NAME} embeddings through Ollama...")
-        embeddings = OllamaEmbeddings(
-            model=MODEL_NAME,
-            base_url="http://localhost:11434"
-        )
-        
-        logging.info(f"Creating FAISS database with {len(chunks)} chunks using {MODEL_NAME} embeddings...")
+        # SIMPLE: Always use BGE HuggingFaceEmbeddings and from_documents
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        logging.info(f"Initializing {EMBEDDING_MODEL} embeddings for database build...")
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        logging.info(f"Creating FAISS database with {len(chunks)} chunks using {EMBEDDING_MODEL} embeddings...")
         db = FAISS.from_documents(chunks, embeddings)
         db.save_local(DB_PATH)
-        logging.info(f"✅ Vector DB built from {len(chunks)} chunks using {MODEL_NAME} embeddings and saved to {DB_PATH}!")
+        logging.info(f"✅ Vector DB built from {len(chunks)} chunks using {EMBEDDING_MODEL} embeddings and saved to {DB_PATH}!")
     except Exception as e:
         logging.error(f"❌ Failed to build vector DB: {e}")
 

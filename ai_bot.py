@@ -1,6 +1,13 @@
 import os, csv, shutil, re
 from datetime import datetime
 import time  # Add timing import
+
+# Set environment variables to prevent segmentation faults
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 from Logistics_Files import *
 from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, POSTGRES_PASSWORD
 # UPLOAD_PIN commented out for now
@@ -22,9 +29,10 @@ from langchain_core.documents import Document
 try:
     from sentence_transformers import SentenceTransformer
     SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
+    print("[INFO] sentence-transformers imported successfully")
+except ImportError as e:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    print("[WARNING] sentence-transformers not available, using simple fallback embeddings")
+    print(f"[WARNING] sentence-transformers not available: {e}, using simple fallback embeddings")
 import xml.etree.ElementTree as ET
 from docx import Document as DocxReader
 import random
@@ -211,7 +219,7 @@ def detect_hardware_capabilities():
     return hardware_info
 
 class AIApp:
-    def __init__(self, master: Optional[Any] = None, bucket_name: Optional[str] = None, region_name: Optional[str] = None, use_s3: Optional[bool] = None):
+    def __init__(self, master: Optional[Any] = None, bucket_name: Optional[str] = None, region_name: Optional[str] = None, use_s3: Optional[bool] = None, skip_db_init: bool = False):
         """Initialize the AIApp with embedding, LLM, and document DB."""
         self.theme = "light"
         self.mode = "Q&A"
@@ -226,21 +234,17 @@ class AIApp:
         logging.info(f"[DEBUG] Initializing embedding models from config: {EMBEDDING_MODEL}")
         self.initialize_embedding_models()
         
-        # SPEED OPTIMIZATION: Use BGE embeddings from config for speed boost
-        self.embedding_dimension = 768  # BGE-Base dimension for speed
-        logging.info(f"[SPEED] Using {EMBEDDING_MODEL} embeddings ({self.embedding_dimension}D) for 1000x speed boost")
-        
-        # Initialize BGE embedding model from config
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                self.bge_model = SentenceTransformer(EMBEDDING_MODEL)
-                logging.info(f"[SPEED] {EMBEDDING_MODEL} embeddings loaded successfully - 1000x faster than config model!")
-            except Exception as e:
-                logging.warning(f"[SPEED] {EMBEDDING_MODEL} loading failed: {e}, falling back to {MODEL_NAME}")
-                self.bge_model = None
+        # BGE embeddings are now initialized in initialize_embedding_models()
+        # Set embedding dimension based on the initialized model
+        if hasattr(self, 'embedding') and hasattr(self.embedding, 'embedding_dimension'):
+            self.embedding_dimension = self.embedding.embedding_dimension
         else:
-            logging.warning(f"[SPEED] sentence-transformers not available, using {MODEL_NAME} fallback")
-            self.bge_model = None
+            self.embedding_dimension = 768  # Default BGE-Base dimension
+        logging.info(f"[SPEED] Embedding dimension: {self.embedding_dimension}D")
+        
+        # Configuration for semantic search
+        self.enable_semantic_search = True  # Enable hybrid semantic + vector search
+        self.semantic_search_variations = 10  # Number of semantic variations to generate
         
         logging.info("[DEBUG] Initializing LLM (Ollama will auto-detect best available device)...")
         optimal_device = self.hardware_info['optimal_device']
@@ -248,7 +252,12 @@ class AIApp:
         
         # OllamaLLM automatically uses the best available device (GPU if available, CPU if not)
         self.llm = OllamaLLM(
-            model=MODEL_NAME
+            model=MODEL_NAME,
+            temperature=0.1,  # Low temperature for consistent, factual answers
+            num_ctx=4096,     # Balanced context window for speed vs coverage
+            num_predict=768,  # Balanced response length for speed vs quality
+            stop=None,        # Don't stop early
+            reset=True        # Reset conversation context for each call
         )
         logging.info(f"[DEBUG] LLM initialized successfully (Ollama auto-detected device)")
         self.db = None
@@ -266,26 +275,71 @@ class AIApp:
         logging.info("[DEBUG] Initializing confidence models...")
         self.initialize_confidence_models()
         
-        logging.info("[DEBUG] Step 3: Loading vector database...")
-        self.load_vector_db()
+        # Skip database initialization if requested (for background building)
+        if skip_db_init:
+            logging.info("[DEBUG] Skipping database initialization (will be built in background)")
+            # Log final device configuration
+            logging.info(f"[DEBUG] Step 5: AIApp initialization completed (database skipped)")
+            logging.info(f"[DEBUG] Final configuration:")
+            logging.info(f"[DEBUG]   - Hardware detected: {self.hardware_info['optimal_device']}")
+            embedding_type = "BGE" if hasattr(self, 'bge_model') and self.bge_model is not None else MODEL_NAME.split(':')[0]
+            logging.info(f"[DEBUG]   - Embedding model: {embedding_type} ({self.current_embedding_type})")
+            logging.info(f"[DEBUG]   - LLM model: {MODEL_NAME}")
+            logging.info(f"[DEBUG]   - Confidence model: {'Available' if self.confidence_model else 'Not available'}")
+            if self.hardware_info['gpu_available']:
+                logging.info(f"[DEBUG]   - GPU: {self.hardware_info['gpu_type']} ({self.hardware_info['gpu_memory_gb']:.1f} GB)")
+            else:
+                logging.info(f"[DEBUG]   - GPU: Not available (using CPU)")
+            logging.info(f"[DEBUG]   - Optimal batch size: {self.hardware_info['optimal_batch_size']}")
+            return
+        
+        logging.info("[DEBUG] Step 3: Checking vector database existence...")
+        
+        # Check if database files exist before trying to load
+        if self.database_exists_and_valid():
+            logging.info("[DEBUG] Step 3a: Database files exist, attempting to load...")
+            self.load_vector_db()
+        else:
+            logging.info("[DEBUG] Step 3a: No valid database files found")
+            self.db = None
         
         # Force rebuild if loading failed OR if we need to update embeddings
         if not self.db:
             logging.info("[DEBUG] Step 4: No existing database found, building new one...")
             self.build_db()
         else:
-            # Check if we need to rebuild due to embedding model change
+            # Check if we need to rebuild due to embedding model change or document changes
             try:
                 logging.info("[DEBUG] Step 4: Testing existing database compatibility...")
+                
+                # Check if embedding model has changed (only rebuild if necessary)
+                if self._embedding_model_changed_since_last_build():
+                    logging.info("[DEBUG] Step 4: Embedding model changed, rebuilding database...")
+                    self.force_rebuild_db()
+                    return
+                
                 # Test if the current embeddings work with the existing database
                 test_query = "test"
-                test_embedding = self.embedding.embed_query(test_query)
-                
-                # Actually test the database with a similarity search
-                test_docs = self.db.similarity_search(test_query, k=1)
-                logging.info("[DEBUG] Step 4: Embedding model is compatible with existing database")
+                try:
+                    test_embedding = self.get_query_embeddings(test_query)
+                    
+                    # Actually test the database with a similarity search
+                    test_docs = self.db.similarity_search(test_query, k=1)
+                    logging.info("[DEBUG] Step 4: Embedding model is compatible with existing database")
+                    
+                    # Check if documents have changed (only rebuild if necessary)
+                    if self._documents_changed_since_last_build():
+                        logging.info("[DEBUG] Step 4: Documents have changed, rebuilding database...")
+                        self.force_rebuild_db()
+                    else:
+                        logging.info("[DEBUG] Step 4: Database is up-to-date, no rebuild needed")
+                        
+                except Exception as e:
+                    logging.warning(f"[DEBUG] Step 4: Database test failed, rebuilding database: {e}")
+                    self.force_rebuild_db()
+                    
             except Exception as e:
-                logging.warning(f"[DEBUG] Step 4: Embedding model incompatible, rebuilding database: {e}")
+                logging.warning(f"[DEBUG] Step 4: Database compatibility check failed, rebuilding database: {e}")
                 self.force_rebuild_db()
         
         # Log final device configuration
@@ -303,51 +357,67 @@ class AIApp:
         logging.info(f"[DEBUG]   - Optimal batch size: {self.hardware_info['optimal_batch_size']}")
 
     def initialize_embedding_models(self):
-        """Initialize embedding model (Ollama automatically uses best available device)."""
+        """Initialize embeddings using BGE for maximum speed and quality."""
         try:
-            # Initialize embeddings
-            optimal_device = self.hardware_info['optimal_device']
-            logging.info(f"[DEBUG] Initializing embeddings (Ollama will auto-detect best device: {optimal_device})")
-            from langchain_ollama import OllamaEmbeddings
-            
-            # OllamaEmbeddings automatically uses the best available device (GPU if available, CPU if not)
-            self.embedding = OllamaEmbeddings(
-                model=MODEL_NAME,
-                keep_alive=3600  # Keep model loaded for 1 hour to avoid reloading
-            )
-            
-            self.current_embedding_type = MODEL_NAME.split(':')[0]  # Extract model name without version
-            logging.info(f"[DEBUG] {MODEL_NAME} embeddings initialized successfully (Ollama auto-detected device)")
-            
+            if SENTENCE_TRANSFORMERS_AVAILABLE:
+                from sentence_transformers import SentenceTransformer
+                # Initialize BGE model directly
+                self.bge_model = SentenceTransformer(EMBEDDING_MODEL)
+                # Create a wrapper that matches LangChain's embedding interface
+                self.embedding = self._create_bge_wrapper()
+                self.current_embedding_type = "bge"
+                logging.info(f"[SPEED] Using {EMBEDDING_MODEL} embeddings - 1000x faster than Ollama!")
+            else:
+                # Fallback to Ollama embeddings if sentence-transformers not available
+                from langchain_ollama import OllamaEmbeddings
+                self.embedding = OllamaEmbeddings(model=MODEL_NAME)
+                self.bge_model = None
+                self.current_embedding_type = "ollama"
+                logging.warning(f"[FALLBACK] sentence-transformers not available, using Ollama embeddings")
         except Exception as e:
-            logging.error(f"[DEBUG] Failed to initialize embeddings: {e}")
-            raise Exception("No embedding model available")
+            logging.error(f"[DEBUG] Failed to initialize BGE embeddings: {e}")
+            # Fallback to Ollama embeddings
+            try:
+                from langchain_ollama import OllamaEmbeddings
+                self.embedding = OllamaEmbeddings(model=MODEL_NAME)
+                self.bge_model = None
+                self.current_embedding_type = "ollama"
+                logging.warning(f"[FALLBACK] Using Ollama embeddings due to BGE initialization failure")
+            except Exception as fallback_e:
+                logging.error(f"[DEBUG] Both BGE and Ollama embeddings failed: {fallback_e}")
+                raise Exception("No embedding model available")
+
+    def _create_bge_wrapper(self):
+        """Create a LangChain-compatible wrapper for BGE embeddings."""
+        class BGEEmbeddingWrapper:
+            def __init__(self, model):
+                self.model = model
+                self.embedding_dimension = 768  # BGE-Base dimension
+            
+            def __call__(self, text):
+                """Make the wrapper callable for LangChain compatibility."""
+                if isinstance(text, list):
+                    return self.embed_documents(text)
+                else:
+                    return self.embed_query(text)
+            
+            def embed_query(self, text):
+                return self.model.encode(text).tolist()
+            
+            def embed_documents(self, texts):
+                return self.model.encode(texts).tolist()
+        
+        return BGEEmbeddingWrapper(self.bge_model)
+
+    def get_query_embeddings(self, query: str):
+        """Get query embeddings using the configured BGE embeddings object."""
+        return self.embedding.embed_query(query)
 
     def _create_fast_faiss_database(self, chunks, embedding_model):
-        """Create a standard FAISS database - the fast, reliable way."""
-        try:
-            print(f"[FAST] Creating standard FAISS database with {len(chunks)} chunks...")
-            print(f"[SPEED] Using {self.embedding_dimension}D embeddings for maximum speed")
-            
-            # Use the embedding model directly for document processing
-            print(f"[SPEED] Using {MODEL_NAME} embeddings for document chunks")
-            print(f"[SPEED] Document embeddings will be generated during database creation")
-            
-            # Just use the default FAISS index - it's actually FAST for small datasets!
-            print(f"[FAST] Using default FAISS index (fastest for your data size)")
-            
-            # Create standard FAISS database with embeddings
-            # Use the more reliable from_documents method
-            faiss_db = FAISS.from_documents(chunks, embedding_model)
-            
-            print(f"[FAST] Standard FAISS database created successfully with {self.embedding_dimension}D embeddings")
-            return faiss_db
-            
-        except Exception as e:
-            print(f"[FAST] Error creating database: {e}")
-            print(f"[FAST] Falling back to standard FAISS database...")
-            # Fallback to standard FAISS
-            return FAISS.from_documents(chunks, embedding_model)
+        """Create FAISS database using configured embeddings (BGE or Ollama)."""
+        embedding_type = "BGE" if self.current_embedding_type == "bge" else "Ollama"
+        print(f"[FAST] Creating FAISS database with {len(chunks)} chunks using {embedding_type} embeddings...")
+        return FAISS.from_documents(chunks, self.embedding)
 
     def select_optimal_embedding(self, operation_type="initial_build"):
         """Select the optimal embedding model based on operation type."""
@@ -357,7 +427,7 @@ class AIApp:
             logging.info(f"[DEBUG] Using {EMBEDDING_MODEL} embeddings for maximum speed")
         else:
             self.current_embedding_type = MODEL_NAME.split(':')[0]  # Extract model name without version
-            logging.info(f"[DEBUG] Using native {MODEL_NAME} embeddings (fallback)")
+            logging.info(f"[DEBUG] Using Ollama embeddings (fallback)")
         return True
 
     def evaluate_content_safety(self, text: str, type: str = "input") -> bool:
@@ -381,7 +451,13 @@ class AIApp:
         """Load the FAISS vector database from disk with optimal embeddings."""
         try:
             logging.info("[DEBUG] Step 3a: Starting FAISS database load...")
-            # Load the FAISS database with optimal embeddings
+            
+            # Double-check database files exist before loading
+            if not self.database_exists_and_valid():
+                logging.warning("[DEBUG] Step 3a: Database files don't exist or are invalid")
+                return False
+            
+            # Load the FAISS database with configured embeddings (BGE)
             self.db = FAISS.load_local(DB_PATH, self.embedding, allow_dangerous_deserialization=True)
             logging.info("[DEBUG] Step 3b: FAISS database loaded successfully")
             
@@ -393,8 +469,10 @@ class AIApp:
             add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using {embedding_type}.")
             logging.info(f"[DEBUG] Step 3c: Found {doc_count} documents in DOCS_PATH")
             return True
+            
         except Exception as e:
-            logging.warning(f"[DEBUG] Step 3a: Vector database not found or corrupted: {e}")
+            logging.warning(f"[DEBUG] Step 3a: Vector database load failed: {e}")
+            self.db = None  # Ensure db is set to None on failure
             return False
 
     def _optimize_existing_faiss_index(self):
@@ -459,6 +537,80 @@ class AIApp:
         except Exception as e:
             logging.warning(f"[DEBUG] Database validation failed: {e}")
             return False
+    
+    def _documents_changed_since_last_build(self) -> bool:
+        """Check if documents have changed since the last database build."""
+        try:
+            # Get current document files and their modification times
+            current_docs = {}
+            if os.path.exists(DOCS_PATH):
+                for f in os.listdir(DOCS_PATH):
+                    if os.path.isfile(os.path.join(DOCS_PATH, f)):
+                        file_path = os.path.join(DOCS_PATH, f)
+                        current_docs[f] = os.path.getmtime(file_path)
+            
+            # Check if we have a build timestamp file
+            build_timestamp_file = os.path.join(DB_PATH, 'last_build_timestamp.txt')
+            if not os.path.exists(build_timestamp_file):
+                logging.info("[DEBUG] No build timestamp found, assuming rebuild needed")
+                return True
+            
+            # Read the last build timestamp
+            try:
+                with open(build_timestamp_file, 'r') as f:
+                    last_build_time = float(f.read().strip())
+            except:
+                logging.info("[DEBUG] Could not read build timestamp, assuming rebuild needed")
+                return True
+            
+            # Check if any documents are newer than the last build
+            for filename, mod_time in current_docs.items():
+                if mod_time > last_build_time:
+                    logging.info(f"[DEBUG] Document {filename} modified after last build, rebuild needed")
+                    return True
+            
+            logging.info("[DEBUG] All documents are older than last build, no rebuild needed")
+            return False
+            
+        except Exception as e:
+            logging.warning(f"[DEBUG] Error checking document changes: {e}, assuming rebuild needed")
+            return True
+    
+    def _embedding_model_changed_since_last_build(self) -> bool:
+        """Check if the embedding model has changed since the last database build."""
+        try:
+            # Check if we have a build info file
+            build_info_file = os.path.join(DB_PATH, 'build_info.txt')
+            if not os.path.exists(build_info_file):
+                logging.info("[DEBUG] No build info found, assuming rebuild needed")
+                return True
+            
+            # Read the last build info
+            try:
+                with open(build_info_file, 'r') as f:
+                    last_build_info = f.read().strip()
+            except:
+                logging.info("[DEBUG] Could not read build info, assuming rebuild needed")
+                return True
+            
+            # Get current embedding model info
+            current_embedding_type = getattr(self, 'current_embedding_type', 'unknown')
+            current_model_name = MODEL_NAME
+            
+            # Create current build info string
+            current_build_info = f"{current_embedding_type}:{current_model_name}"
+            
+            # Check if embedding model has changed
+            if current_build_info != last_build_info:
+                logging.info(f"[DEBUG] Embedding model changed from '{last_build_info}' to '{current_build_info}', rebuild needed")
+                return True
+            
+            logging.info(f"[DEBUG] Embedding model unchanged: {current_build_info}")
+            return False
+            
+        except Exception as e:
+            logging.warning(f"[DEBUG] Error checking embedding model changes: {e}, assuming rebuild needed")
+            return True
     
 
 
@@ -1005,7 +1157,7 @@ class AIApp:
                 # Validate HNSW index is working
                 try:
                     test_query = "integrity test"
-                    test_embedding = self.embedding.embed_query(test_query)
+                    test_embedding = self.get_query_embeddings(test_query)
                     test_vector = np.array([test_embedding]).astype('float32')
                     distances, indices = self.db.index.search(test_vector, k=1)
                     print(f"[HNSW] HNSW index integrity validated - search successful")
@@ -1029,6 +1181,28 @@ class AIApp:
             for missing in missing_sources:
                 logging.error(f"CRITICAL: Orphaned source: {missing}")
             raise Exception(f"Data integrity compromised: {len(missing_sources)} orphaned sources found")
+        
+        # Save build timestamp for future change detection
+        try:
+            build_timestamp_file = os.path.join(DB_PATH, 'last_build_timestamp.txt')
+            with open(build_timestamp_file, 'w') as f:
+                f.write(str(time.time()))
+            logging.info(f"[DEBUG] Build timestamp saved: {build_timestamp_file}")
+        except Exception as e:
+            logging.warning(f"[DEBUG] Could not save build timestamp: {e}")
+        
+        # Save build info for embedding model change detection
+        try:
+            build_info_file = os.path.join(DB_PATH, 'build_info.txt')
+            current_build_info = f"{self.current_embedding_type}:{MODEL_NAME}"
+            with open(build_info_file, 'w') as f:
+                f.write(current_build_info)
+            logging.info(f"[DEBUG] Build info saved: {build_info_file} ({current_build_info})")
+        except Exception as e:
+            logging.warning(f"[DEBUG] Could not save build info: {e}")
+        
+        logging.info(f"[DEBUG] Database build completed successfully with {len(chunks)} chunks")
+        add_backend_log(f"Vector database rebuilt successfully with {len(chunks)} chunks using {self.current_embedding_type} embeddings.")
         
         logging.info("CRITICAL: Data integrity validation passed - all sources exist on disk")
         logging.info(f"Vector DB rebuilt from {len(chunks)} chunks using {self.current_embedding_type} embeddings and saved to {DB_PATH}! Sources: {sorted(sources)}")
@@ -1186,6 +1360,12 @@ Please provide a structured summary:"""
         start_time = time.time()
         print(f"[TIMING] Starting question processing for: {query[:50]}...")
         
+        # Reset all variables to prevent contamination between questions
+        answer = ""
+        detailed_answer = ""
+        confidence = 0
+        source_data = {}
+        
         print(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
         # if self.locked_out:
         #     return {"error": "You have been locked out for repeated misuse."}
@@ -1273,13 +1453,24 @@ Please provide a structured summary:"""
         query_start_time = time.time()
         print(f"[TIMING] Starting query_answer processing")
         
+        # Reset all context and answer variables to prevent contamination between queries
+        actual_context = ""
+        raw_context = ""
+        context_parts = []
+        helpful_answer = ""
+        detailed_answer = ""
+        answer = ""
+        print(f"[DEBUG] Context and answer variables reset for new query: {query[:50]}...")
+        
         if not self.db:
             raise Exception("Database not loaded. Please upload documents first.")
         
         # STEP 1: Query Preprocessing
         preprocessing_start = time.time()
         print(f"[TIMING] STEP 1: Starting query preprocessing")
-        if chat_history:
+        # For questionnaire processing, don't include chat history to prevent contamination
+        # Each question should be processed independently
+        if chat_history and len(chat_history) < 3:  # Only include history for regular chat (not questionnaires)
             history_str = "\n".join([f"User: {item['question']}\nAI: {item['answer']}" for item in chat_history])
             full_query = f"Previous conversation:\n{history_str}\n\nCurrent question: {query}"
         else:
@@ -1299,7 +1490,7 @@ Please provide a structured summary:"""
             else:
                 print(f"[TIMING] STEP 2: Direct embedding failed, using synchronous fallback")
                 # Fallback to synchronous embedding
-                query_embedding = self.embedding.embed_query(full_query)
+                query_embedding = self.get_query_embeddings(full_query)
                 
         except Exception as e:
             embedding_time = time.time() - embedding_start
@@ -1313,7 +1504,7 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Vector DB index size: {self.db.index.ntotal if hasattr(self.db, 'index') else 'Unknown'}")
         print(f"[TIMING] STEP 2: Direct embedding completed, proceeding to retrieval...")
         # Try early termination first for speed, fallback to regular search
-        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.30)  # Early termination for speed
+        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.3)  # Higher threshold for better relevance
         retrieval_time = time.time() - retrieval_start
         print(f"[TIMING] STEP 3: Document retrieval completed in {retrieval_time:.3f}s")
         print(f"[DEBUG] Retrieved {len(docs)} documents")
@@ -1331,12 +1522,48 @@ Please provide a structured summary:"""
         context_start = time.time()
         print(f"[TIMING] STEP 4: Starting context preparation")
         
-        # Create the actual context from retrieved documents
+        # COMPLETE CONTEXT RESET - prevent any contamination between queries
+        actual_context = ""
+        raw_context = ""
+        context_parts = []
+        
+        # Clear any residual context from previous questions
+        if hasattr(self, '_previous_context'):
+            del self._previous_context
+        if hasattr(self, '_previous_docs'):
+            del self._previous_docs
+        if hasattr(self, '_previous_query'):
+            del self._previous_query
+            
+        # Create clean, isolated context from retrieved documents
         if docs:
             context_parts = []
             for i, doc in enumerate(docs):
-                context_parts.append(f"Document {i+1}:\n{doc.page_content}")
+                # Clean each document chunk to remove any artifacts
+                clean_content = doc.page_content.strip()
+                
+                # Remove any chunk references, table names, or raw document artifacts
+                import re
+                clean_content = re.sub(r'Chunk \d+:', '', clean_content)
+                clean_content = re.sub(r'Table \d+:', '', clean_content)
+                clean_content = re.sub(r'Name of System/Type.*?Approved for use', '', clean_content, flags=re.DOTALL)
+                clean_content = re.sub(r'Information Security Objectives.*?planning to achieve them:', '', clean_content, flags=re.DOTALL)
+                clean_content = re.sub(r'Current question:.*?CONTEXT:', '', clean_content, flags=re.DOTALL)
+                
+                # Limit chunk size and clean up
+                if len(clean_content) > 250:  # Reduced from 300 for cleaner context
+                    clean_content = clean_content[:250] + "..."
+                
+                # Only add if content is meaningful after cleaning
+                if len(clean_content.strip()) > 20:
+                    context_parts.append(f"Document {i+1}:\n{clean_content}")
+            
             actual_context = "\n\n".join(context_parts)
+            
+            # Store clean context for this question only
+            self._previous_context = actual_context
+            self._previous_docs = docs
+            self._previous_query = query
         else:
             actual_context = "No relevant documents found."
         
@@ -1388,22 +1615,61 @@ Please provide a structured summary:"""
         doc_sources = [os.path.basename(str(d.metadata.get("source", ""))) for d in docs]
         logging.info(f"[DEBUG] Using documents: {doc_sources}")
         
-        # Update the context with ONLY chunks using streamlined building for maximum speed
+        # Clear any previous context to prevent contamination between queries
+        actual_context = ""
+        
+        # Update the context with ENHANCED filtering and building for better quality
         if docs:
-            # Use streamlined context building (much faster than parallel processing)
-            raw_context = self.build_context_streamlined(docs)
-            # Apply context size limiting for faster LLM processing
-            actual_context = self.limit_context_size(raw_context, max_chars=4000)
-            print(f"[SPEED] Context prepared from {len(docs)} chunks (final length: {len(actual_context)} chars)")
+            # Enhanced filtering with multi-factor relevance scoring
+            relevant_docs = self.filter_relevant_chunks(query, docs, threshold=0.7)
+            print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(relevant_docs)} relevant chunks")
+            
+            # Build context with intelligent chunking and overlap
+            raw_context = self.build_context_streamlined(relevant_docs, max_chars=3500, overlap_ratio=0.2)
+            
+            # Validate context relevance before proceeding
+            validated_context = self.validate_context_relevance(query, raw_context, relevant_docs)
+            
+            # Apply final context size limiting
+            actual_context = self.limit_context_size(validated_context, max_chars=3000)
+            print(f"[QUALITY] Context prepared: {len(relevant_docs)} chunks -> {len(actual_context)} chars")
+            
+            # DEBUG: Show context preview for troubleshooting
+            print(f"[DEBUG] Context preview (first 500 chars): {actual_context[:500]}...")
         else:
             actual_context = "No relevant chunks found."
         
-        # Update the complete prompt with ultra-short template for maximum speed
-        complete_prompt = f"Answer: {full_query}\nContext: {actual_context}\nRules: Use only context info."
+        # FINAL CONTEXT VALIDATION - ensure prompt is clean before sending to LLM
+        final_context = actual_context
+        final_query = full_query
         
+        # Remove any remaining contamination from the query
+        if "Previous conversation:" in final_query:
+            # Extract only the current question
+            final_query = final_query.split("Current question: ")[-1] if "Current question: " in final_query else full_query
+        
+        # Remove any remaining contamination from the context
+        import re
+        final_context = re.sub(r'Chunk \d+:', '', final_context)
+        final_context = re.sub(r'Table \d+:', '', final_context)
+        final_context = re.sub(r'Name of System/Type.*?Approved for use', '', final_context, flags=re.DOTALL)
+        final_context = re.sub(r'Information Security Objectives.*?planning to achieve them:', '', final_context, flags=re.DOTALL)
+        final_context = re.sub(r'Current question:.*?CONTEXT:', '', final_context, flags=re.DOTALL)
+        
+        # Use enhanced prompt engineering for better answer quality
+        complete_prompt = self.build_enhanced_prompt(full_query, actual_context, chat_history)
+
         # Build minimal sources info for speed (skip detailed processing)
         sources = []
         source_summary = {}
+        
+        # Clear any residual context to prevent cross-question contamination
+        if hasattr(self, 'llm') and hasattr(self.llm, 'reset'):
+            try:
+                self.llm.reset()
+                print(f"[DEBUG] LLM context reset for question isolation")
+            except Exception as e:
+                print(f"[DEBUG] LLM reset failed (non-critical): {e}")
         
         for i, d in enumerate(docs):
             src = os.path.basename(str(d.metadata.get("source", "N/A")))
@@ -1494,13 +1760,16 @@ Please provide a structured summary:"""
         llm_start = time.time()
         print(f"[TIMING] STEP 5: Starting optimized LLM call")
         try:
-            print(f"[SPEED] Sending optimized prompt to LLM (length: {len(complete_prompt)} chars)")
+            print(f"[SPEED] Sending CLEANED prompt to LLM (length: {len(complete_prompt)} chars)")
+            print(f"[DEBUG] Final query length: {len(final_query)} chars")
+            print(f"[DEBUG] Final context length: {len(final_context)} chars")
+            print(f"[DEBUG] Total prompt length: {len(complete_prompt)} chars")
             
             # Use direct LLM call for maximum speed (no streaming overhead)
             raw_answer = self.llm.invoke(complete_prompt)
             
-            # Apply response length limiting
-            answer = self.get_concise_response(complete_prompt) if len(raw_answer) > 800 else raw_answer
+            # Use full response for better accuracy (no length limiting)
+            answer = raw_answer
             
             # Handle different response formats
             if isinstance(answer, dict) and 'result' in answer:
@@ -1518,30 +1787,103 @@ Please provide a structured summary:"""
             response_processing_start = time.time()
             print(f"[TIMING] STEP 6: Starting response processing & output")
             
-            # Parse the structured response to extract helpful and detailed answers
+            # Parse the response to extract the focused answer
             helpful_answer = ""
             detailed_answer = ""
             
-            # Try to extract structured format
-            import re
-            helpful_match = re.search(r'HELPFUL ANSWER:\s*(.*?)(?=\nDETAILED ANSWER:|$)', answer, re.DOTALL | re.IGNORECASE)
-            detailed_match = re.search(r'DETAILED ANSWER:\s*(.*?)(?=\n[A-Z]|$)', answer, re.DOTALL | re.IGNORECASE)
-            
-            if helpful_match and detailed_match:
-                helpful_answer = helpful_match.group(1).strip()
-                detailed_answer = detailed_match.group(1).strip()
-                print(f"[DEBUG] Successfully parsed structured response - helpful: {len(helpful_answer)} chars, detailed: {len(detailed_answer)} chars")
-                print(f"[DEBUG] Helpful preview: {helpful_answer[:100]}...")
-                print(f"[DEBUG] Detailed preview: {detailed_answer[:100]}...")
+            # Extract the actual answer content after "ANSWER:"
+            if "ANSWER:" in answer:
+                # Get everything after "ANSWER:"
+                answer_content = answer.split("ANSWER:")[1].strip()
+                
+                # Clean up any remaining artifacts
+                cleaned_answer = re.sub(r'Chunk \d+:', '', answer_content)
+                cleaned_answer = re.sub(r'Table \d+:', '', cleaned_answer)
+                cleaned_answer = re.sub(r'Name of System/Type.*?Approved for use', '', cleaned_answer, flags=re.DOTALL)
+                cleaned_answer = re.sub(r'Information Security Objectives.*?planning to achieve them:', '', cleaned_answer, flags=re.DOTALL)
+                cleaned_answer = re.sub(r'Current question:.*?CONTEXT:', '', cleaned_answer, flags=re.DOTALL)
+                cleaned_answer = re.sub(r'DETAILED ANSWER:.*?\[Your comprehensive answer here\]', '', cleaned_answer, flags=re.DOTALL)
+                cleaned_answer = re.sub(r'ONE-LINE ANSWER:.*?\[Your concise one-line answer here\]', '', cleaned_answer, flags=re.DOTALL)
+                
+                # Take only the first meaningful sentence or two
+                sentences = cleaned_answer.split('.')
+                meaningful_sentences = []
+                
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if sentence and len(sentence) > 10 and not sentence.startswith('Chunk') and not sentence.startswith('Table'):
+                        meaningful_sentences.append(sentence)
+                        if len(meaningful_sentences) >= 2:  # Limit to 2 sentences
+                            break
+                
+                if meaningful_sentences:
+                    helpful_answer = '. '.join(meaningful_sentences) + '.'
+                    detailed_answer = helpful_answer
+                else:
+                    helpful_answer = "No specific information found about this topic."
+                    detailed_answer = helpful_answer
             else:
-                # Fallback: treat the entire response as detailed answer and generate helpful answer
-                detailed_answer = answer.strip()
-                helpful_answer = self.generate_short_answer(query, detailed_answer, docs)
-                print(f"[DEBUG] Using fallback parsing - generated helpful answer from detailed")
+                # Fallback: try to extract meaningful content
+                cleaned_answer = re.sub(r'Question:.*?Context:', '', answer, flags=re.DOTALL)
+                cleaned_answer = re.sub(r'Chunk \d+:', '', cleaned_answer)
+                cleaned_answer = re.sub(r'Table \d+:', '', cleaned_answer)
+                
+                # Take first meaningful sentence
+                sentences = cleaned_answer.split('.')
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if sentence and len(sentence) > 20 and not sentence.startswith('Chunk') and not sentence.startswith('Table'):
+                        helpful_answer = sentence + '.'
+                        detailed_answer = helpful_answer
+                        break
+                
+                if not helpful_answer:
+                    helpful_answer = "No specific information found about this topic."
+                    detailed_answer = helpful_answer
             
-            # Use helpful answer as the main answer for processing
+            print(f"[DEBUG] Cleaned answer: {len(helpful_answer)} chars")
+            print(f"[DEBUG] Answer preview: {helpful_answer[:100]}...")
+            
+            # Use the cleaned answer
             answer = helpful_answer
             
+            # Final cleanup - remove any remaining raw document artifacts
+            if len(answer) > 500:  # If answer is still too long
+                print(f"[DEBUG] Answer still too long ({len(answer)} chars), applying final cleanup")
+                # Take only the first meaningful part
+                first_period = answer.find('.')
+                if first_period > 0:
+                    answer = answer[:first_period + 1]
+                    print(f"[DEBUG] Final answer length: {len(answer)} chars")
+            
+            # Remove any question repetition
+            if answer.startswith("Question:") or answer.startswith("Context:"):
+                print(f"[DEBUG] Question/context detected at start, cleaning")
+                # Find the first sentence that doesn't start with these
+                sentences = answer.split('.')
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if sentence and not sentence.startswith('Question:') and not sentence.startswith('Context:') and len(sentence) > 10:
+                        answer = sentence + '.'
+                        break
+                else:
+                    answer = "No specific information found about this topic."
+            
+            # Ensure answer doesn't contain raw document artifacts
+            if 'Chunk' in answer or 'Table' in answer or 'Name of System' in answer:
+                print(f"[DEBUG] Raw document content detected, using fallback")
+                answer = "No specific information found about this topic."
+            
+            # FALLBACK: If LLM says no info found but we have context, try to extract relevant info
+            if "no specific information found" in answer.lower() or "no information found" in answer.lower():
+                print(f"[DEBUG] LLM said no info found, attempting fallback extraction")
+                fallback_answer = self._extract_fallback_answer(full_query, actual_context)
+                if fallback_answer:
+                    print(f"[DEBUG] Fallback extraction successful: {fallback_answer[:100]}...")
+                    answer = fallback_answer
+                else:
+                    print(f"[DEBUG] Fallback extraction also failed")
+        
         except Exception as e:
             logging.error(f"Error calling LLM: {e}")
             import traceback
@@ -1682,15 +2024,9 @@ Please provide a structured summary:"""
         # Skip final hallucination check entirely for speed
         print(f"[TIMING] Skipping final hallucination check for speed")
         
-        # Use the parsed helpful answer as final answer, and store detailed answer
-        if 'helpful_answer' in locals() and helpful_answer:
-            final_answer = helpful_answer
-        if 'detailed_answer' in locals() and detailed_answer:
-            # Keep the parsed detailed answer
-            detailed_answer = detailed_answer
-        else:
-            # If no detailed answer was parsed, use the original answer as detailed
-            detailed_answer = final_answer
+        # Use the current answer directly (no variable contamination)
+        final_answer = answer.strip()
+        detailed_answer = answer.strip()
         
         # Complete response processing timing
         response_processing_time = time.time() - response_processing_start
@@ -1715,154 +2051,155 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Returning - final_answer: {len(final_answer)} chars, detailed_answer: {len(detailed_answer)} chars")
         print(f"[DEBUG] Final helpful preview: {final_answer[:100]}...")
         print(f"[DEBUG] Final detailed preview: {detailed_answer[:100]}...")
+        print(f"[DEBUG] FINAL answer variable before return: {answer[:100]}...")
         
         # Return both helpful and detailed answers
         return final_answer, confidence, source_data, detailed_answer
 
-    def calculate_answer_confidence(self, query: str, answer: str, docs: list) -> float:
-        """Calculate the AI's confidence in its answer using enhanced evaluation"""
-        try:
-            # Prepare context from retrieved documents
-            context = "\n\n".join([f"Document {i+1}: {doc.page_content}" for i, doc in enumerate(docs)])
+#     def calculate_answer_confidence(self, query: str, answer: str, docs: list) -> float:
+#         """Calculate the AI's confidence in its answer using enhanced evaluation"""
+#         try:
+#             # Prepare context from retrieved documents
+#             context = "\n\n".join([f"Document {i+1}: {doc.page_content}" for i, doc in enumerate(docs)])
             
-            # Enhanced confidence evaluation prompt
-            confidence_prompt = f"""You are an expert evaluator assessing the quality and confidence of a compliance assistant's answer.
+#             # Enhanced confidence evaluation prompt
+#             confidence_prompt = f"""You are an expert evaluator assessing the quality and confidence of a compliance assistant's answer.
 
-Question: {query}
+# Question: {query}
 
-Answer provided: {answer}
+# Answer provided: {answer}
 
-Source documents used:
-{context}
+# Source documents used:
+# {context}
 
-EVALUATION CRITERIA:
-1. RELEVANCE: Does the answer directly address the question asked?
-2. ACCURACY: Is the information in the answer supported by the source documents?
-3. COMPLETENESS: Does the answer provide sufficient detail to be useful?
-4. SYNTHESIS: If multiple sources were used, were they effectively combined?
-5. PROFESSIONALISM: Is the answer clear, well-structured, and workplace-appropriate?
+# EVALUATION CRITERIA:
+# 1. RELEVANCE: Does the answer directly address the question asked?
+# 2. ACCURACY: Is the information in the answer supported by the source documents?
+# 3. COMPLETENESS: Does the answer provide sufficient detail to be useful?
+# 4. SYNTHESIS: If multiple sources were used, were they effectively combined?
+# 5. PROFESSIONALISM: Is the answer clear, well-structured, and workplace-appropriate?
 
-CONFIDENCE SCALE (0-100):
-- 0-20: Very low confidence (answer is incorrect, irrelevant, or completely unsupported)
-- 21-40: Low confidence (answer has major gaps, is vague, or poorly supported)
-- 41-60: Moderate confidence (answer is partially correct but has significant limitations)
-- 61-80: High confidence (answer is mostly correct, well-supported, and useful)
-- 81-100: Very high confidence (answer is accurate, complete, well-synthesized, and professional)
+# CONFIDENCE SCALE (0-100):
+# - 0-20: Very low confidence (answer is incorrect, irrelevant, or completely unsupported)
+# - 21-40: Low confidence (answer has major gaps, is vague, or poorly supported)
+# - 41-60: Moderate confidence (answer is partially correct but has significant limitations)
+# - 61-80: High confidence (answer is mostly correct, well-supported, and useful)
+# - 81-100: Very high confidence (answer is accurate, complete, well-synthesized, and professional)
 
-Consider the quality of the answer relative to the available information. If the answer effectively uses whatever relevant information is available, even if incomplete, it should receive higher confidence.
+# Consider the quality of the answer relative to the available information. If the answer effectively uses whatever relevant information is available, even if incomplete, it should receive higher confidence.
 
-Respond with ONLY a number between 0 and 100, representing your confidence percentage."""
+# Respond with ONLY a number between 0 and 100, representing your confidence percentage."""
 
-            # Get confidence score from LLM
-            confidence_response = self.llm.invoke(confidence_prompt)
-            confidence_text = str(confidence_response).strip()
+#             # Get confidence score from LLM
+#             confidence_response = self.llm.invoke(confidence_prompt)
+#             confidence_text = str(confidence_response).strip()
             
-            # Extract numeric confidence score
-            import re
-            confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
-            if confidence_match:
-                confidence_score = float(confidence_match.group(1))
-                # Ensure it's within 0-100 range
-                confidence_score = max(0, min(100, confidence_score))
-                return round(confidence_score, 2)
-            else:
-                # Fallback if parsing fails
-                return 50.0
+#             # Extract numeric confidence score
+#             import re
+#             confidence_match = re.search(r'\b(\d{1,3})\b', confidence_text)
+#             if confidence_match:
+#                 confidence_score = float(confidence_match.group(1))
+#                 # Ensure it's within 0-100 range
+#                 confidence_score = max(0, min(100, confidence_score))
+#                 return round(confidence_score, 2)
+#             else:
+#                 # Fallback if parsing fails
+#                 return 50.0
                 
-        except Exception as e:
-            logging.warning(f"Confidence calculation failed: {e}")
-            # Fallback confidence based on whether we have documents
-            return 20.0 if docs else 0.0
+#         except Exception as e:
+#             logging.warning(f"Confidence calculation failed: {e}")
+#             # Fallback confidence based on whether we have documents
+#             return 20.0 if docs else 0.0
 
-    def enhance_answer_quality(self, query: str, answer: str, docs: list) -> str:
-        """Enhance answer quality by checking for common issues and improving structure"""
-        enhancement_start = time.time()
-        logging.info(f"[TIMING] Starting answer enhancement")
+#     def enhance_answer_quality(self, query: str, answer: str, docs: list) -> str:
+#         """Enhance answer quality by checking for common issues and improving structure"""
+#         enhancement_start = time.time()
+#         logging.info(f"[TIMING] Starting answer enhancement")
         
-        try:
-            # Check if answer needs improvement
-            answer_lower = answer.lower()
+#         try:
+#             # Check if answer needs improvement
+#             answer_lower = answer.lower()
             
-            # If answer is too short or doesn't seem comprehensive enough
-            if len(answer.strip()) < 100 and docs:
-                logging.info("[DEBUG] Answer may need enhancement, checking quality")
+#             # If answer is too short or doesn't seem comprehensive enough
+#             if len(answer.strip()) < 100 and docs:
+#                 logging.info("[DEBUG] Answer may need enhancement, checking quality")
                 
-                # Check if we have good source material
-                total_source_length = sum(len(doc.page_content) for doc in docs)
-                if total_source_length > 500:  # We have substantial source material
-                    enhancement_prompt = f"""You are a professional compliance assistant. The user asked: {query}
+#                 # Check if we have good source material
+#                 total_source_length = sum(len(doc.page_content) for doc in docs)
+#                 if total_source_length > 500:  # We have substantial source material
+#                     enhancement_prompt = f"""You are a professional compliance assistant. The user asked: {query}
 
-Current answer: {answer}
+# Current answer: {answer}
 
-You have access to substantial source material. Please enhance this answer to be more comprehensive and professional. The enhanced answer should:
+# You have access to substantial source material. Please enhance this answer to be more comprehensive and professional. The enhanced answer should:
 
-1. Be more detailed and specific
-2. Include relevant policy citations or references when possible
-3. Structure the information logically
-4. Be professional and workplace-appropriate
-5. Address the question more thoroughly
+# 1. Be more detailed and specific
+# 2. Include relevant policy citations or references when possible
+# 3. Structure the information logically
+# 4. Be professional and workplace-appropriate
+# 5. Address the question more thoroughly
 
-Please provide an enhanced version of the answer:"""
+# Please provide an enhanced version of the answer:"""
                     
-                    # enhancement_llm_start = time.time()
-                    # enhanced_result = self.llm.invoke(enhancement_prompt)
-                    # enhancement_llm_time = time.time() - enhancement_llm_start
-                    # logging.info(f"[TIMING] Enhancement LLM call took: {enhancement_llm_time:.3f}s")
+#                     # enhancement_llm_start = time.time()
+#                     # enhanced_result = self.llm.invoke(enhancement_prompt)
+#                     # enhancement_llm_time = time.time() - enhancement_llm_start
+#                     # logging.info(f"[TIMING] Enhancement LLM call took: {enhancement_llm_time:.3f}s")
                     
-                    # if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
-                    #     enhanced_answer = enhanced_result['result']
-                    # else:
-                    #     enhanced_answer = str(enhanced_result)
+#                     # if isinstance(enhanced_result, dict) and 'result' in enhanced_result:
+#                     #     enhanced_answer = enhanced_result['result']
+#                     # else:
+#                     #     enhanced_answer = str(enhanced_result)
                     
-                    # # Only use enhanced answer if it's significantly better
-                    # if len(enhanced_answer.strip()) > len(answer.strip()) * 1.5:
-                    #     enhancement_time = time.time() - enhancement_start
-                    #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
-                    #     return enhanced_answer.strip()
+#                     # # Only use enhanced answer if it's significantly better
+#                     # if len(enhanced_answer.strip()) > len(answer.strip()) * 1.5:
+#                     #     enhancement_time = time.time() - enhancement_start
+#                     #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
+#                     #     return enhanced_answer.strip()
             
-            # Check for common issues and fix them
-            if "i don't know" in answer_lower or "no information" in answer_lower:
-                # Try to extract any useful information from sources
-                useful_info = []
-                for doc in docs:
-                    content = doc.page_content.lower()
-                    if any(keyword in content for keyword in query.lower().split()):
-                        useful_info.append(doc.page_content[:200] + "...")
+#             # Check for common issues and fix them
+#             if "i don't know" in answer_lower or "no information" in answer_lower:
+#                 # Try to extract any useful information from sources
+#                 useful_info = []
+#                 for doc in docs:
+#                     content = doc.page_content.lower()
+#                     if any(keyword in content for keyword in query.lower().split()):
+#                         useful_info.append(doc.page_content[:200] + "...")
                 
-                if useful_info:
-                    fallback_prompt = f"""The user asked: {query}
+#                 if useful_info:
+#                     fallback_prompt = f"""The user asked: {query}
 
-While I don't have the exact answer, I found some potentially relevant information in the documents. Please provide a helpful response that:
+# While I don't have the exact answer, I found some potentially relevant information in the documents. Please provide a helpful response that:
 
-1. Acknowledges the limitations
-2. Shares any relevant information found
-3. Suggests where they might find more information
-4. Is professional and helpful
+# 1. Acknowledges the limitations
+# 2. Shares any relevant information found
+# 3. Suggests where they might find more information
+# 4. Is professional and helpful
 
-Relevant information found:
-{chr(10).join(useful_info)}
+# Relevant information found:
+# {chr(10).join(useful_info)}
 
-Please provide a helpful response:"""
+# Please provide a helpful response:"""
                     
-                    # fallback_llm_start = time.time()
-                    # fallback_result = self.llm.invoke(fallback_prompt)
-                    # fallback_llm_time = time.time() - fallback_llm_start
-                    # logging.info(f"[TIMING] Fallback LLM call took: {fallback_llm_time:.3f}s")
+#                     # fallback_llm_start = time.time()
+#                     # fallback_result = self.llm.invoke(fallback_prompt)
+#                     # fallback_llm_time = time.time() - fallback_llm_start
+#                     # logging.info(f"[TIMING] Fallback LLM call took: {fallback_llm_time:.3f}s")
                     
-                    # if isinstance(fallback_result, dict) and 'result' in enhanced_result):
-                    #     enhancement_time = time.time() - enhancement_start
-                    #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
-                    #     return fallback_result['result'].strip()
+#                     # if isinstance(fallback_result, dict) and 'result' in enhanced_result):
+#                     #     enhancement_time = time.time() - enhancement_start
+#                     #     logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
+#                     #     return fallback_result['result'].strip()
             
-            enhancement_time = time.time() - enhancement_start
-            logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
-            return answer.strip()
+#             enhancement_time = time.time() - enhancement_start
+#             logging.info(f"[TIMING] Answer enhancement completed in: {enhancement_time:.3f}s")
+#             return answer.strip()
             
-        except Exception as e:
-            logging.error(f"Error enhancing answer quality: {e}")
-            enhancement_time = time.time() - enhancement_start
-            logging.info(f"[TIMING] Answer enhancement failed after: {enhancement_time:.3f}s")
-            return answer.strip()
+#         except Exception as e:
+#             logging.error(f"Error enhancing answer quality: {e}")
+#             enhancement_time = time.time() - enhancement_start
+#             logging.info(f"[TIMING] Answer enhancement failed after: {enhancement_time:.3f}s")
+#             return answer.strip()
     
     def generate_short_answer(self, query: str, detailed_answer: str, docs: list) -> str:
         """Generate a concise, one-line summary answer for quick overview."""
@@ -1896,8 +2233,8 @@ Provide ONLY the short summary answer:"""
                 sentences = detailed_answer.split('.')
                 if sentences:
                     short_answer = sentences[0].strip() + '.'
-                    if len(short_answer) > 200:
-                        short_answer = short_answer[:200] + '...'
+                    if len(short_answer) > 500:  # Increased from 200 to 500 for better display
+                        short_answer = short_answer[:500] + '...'
             
             return short_answer
             
@@ -1908,7 +2245,7 @@ Provide ONLY the short summary answer:"""
             if sentences:
                 return sentences[0].strip() + '.'
             else:
-                return detailed_answer[:100] + '...' if len(detailed_answer) > 100 else detailed_answer
+                return detailed_answer[:300] + '...' if len(detailed_answer) > 300 else detailed_answer
 
     def force_rebuild_db(self) -> None:
         """Safely delete the FAISS index directory and rebuild the vector DB from scratch."""
@@ -2143,13 +2480,13 @@ Provide ONLY the short summary answer:"""
             
             # Base chunk size calculation based on available resources
             if available_ram_gb > 16:
-                base_chunk_size = 256
+                base_chunk_size = 512    # Increased for better accuracy
             elif available_ram_gb > 8:
-                base_chunk_size = 192
+                base_chunk_size = 384    # Increased for better accuracy
             elif available_ram_gb > 4:
-                base_chunk_size = 128
+                base_chunk_size = 256    # Increased for better accuracy
             else:
-                base_chunk_size = 96
+                base_chunk_size = 192    # Increased minimum
             
             # Adjust based on memory pressure
             if memory_pressure > 80:
@@ -2164,8 +2501,8 @@ Provide ONLY the short summary answer:"""
                 base_chunk_size = int(base_chunk_size * 1.1)  # Increase by 10%
             
             # FAQ Bot Quality Bounds - ensure chunks are optimal for Q&A
-            MIN_CHUNK_SIZE = 128    # Minimum for meaningful context in Q&A
-            MAX_CHUNK_SIZE = 512    # Maximum for FAQ efficiency
+            MIN_CHUNK_SIZE = 256    # Increased minimum for better context in Q&A
+            MAX_CHUNK_SIZE = 1024   # Increased maximum for better FAQ accuracy
             
             # Apply quality bounds
             optimal_chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, base_chunk_size))
@@ -2190,7 +2527,7 @@ Provide ONLY the short summary answer:"""
         except Exception as e:
             logging.warning(f"[DEBUG] Error calculating chunk parameters: {e}, using defaults")
             # Fallback to good FAQ bot defaults
-            return 192, 54  # 192 chars with 54 overlap (28%)
+            return 384, 108  # 384 chars with 108 overlap (28%) for better accuracy
 
     def replace_document_incremental(self, old_filename: str, new_file_path: str) -> bool:
         """Replace a document in the database."""
@@ -2572,8 +2909,8 @@ Provide ONLY the short summary answer:"""
                 return embedding
             else:
                 # Fallback to config model embeddings
-                print(f"[SPEED] Using {MODEL_NAME} embeddings (faster fallback)")
-                embedding = self.embedding.embed_query(query)
+                print(f"[SPEED] Using Ollama embeddings (fallback)")
+                embedding = self.get_query_embeddings(query)
                 
                 # Truncate to smaller dimension for speed boost
                 if len(embedding) > self.embedding_dimension:
@@ -2585,35 +2922,37 @@ Provide ONLY the short summary answer:"""
             logging.warning(f"Embedding failed: {e}")
             return None
 
-    def get_chunks_with_early_termination(self, query: str, similarity_threshold: float = 0.30, min_chunks: int = 5) -> List[Document]:
-        """Get chunks with early termination for high-confidence matches."""
+    def get_chunks_with_early_termination(self, query: str, similarity_threshold: float = 0.15, min_chunks: int = 20) -> List[Document]:
+        """Get chunks using hybrid semantic + vector approach for better coverage."""
         early_start = time.time()
         
         try:
-            print(f"[SPEED] Starting early termination search (threshold: {similarity_threshold})")
+            print(f"[SEMANTIC] Starting hybrid semantic + vector search (threshold: {similarity_threshold})")
             
-            # Try similarity score threshold search first
-            retriever = self.db.as_retriever(
-                search_type="similarity_score_threshold", 
-                search_kwargs={"score_threshold": similarity_threshold, "k": 15}
-            )
-            docs = retriever.invoke(query)
+            # Use hybrid semantic search for better coverage
+            hybrid_docs = self.get_hybrid_semantic_chunks(query, initial_k=25)
             
-            if len(docs) >= min_chunks:
+            if len(hybrid_docs) >= min_chunks:
                 early_time = time.time() - early_start
-                print(f"[SPEED] Early termination SUCCESS: Found {len(docs)} high-confidence chunks in {early_time:.3f}s")
-                return docs[:15]  # Return top 15 high-confidence chunks
+                print(f"[SEMANTIC] Hybrid search SUCCESS: Found {len(hybrid_docs)} semantically relevant chunks in {early_time:.3f}s")
+                return hybrid_docs[:min_chunks]
             else:
-                print(f"[SPEED] Early termination: Only {len(docs)} high-confidence chunks found, using regular search")
-                # Fallback to regular search
-                return self.get_hierarchical_chunks(query, initial_k=15)
+                print(f"[SEMANTIC] Hybrid search: Only {len(hybrid_docs)} chunks found, using fallback")
+                # Use comprehensive fallback search
+                fallback_docs = self.get_fallback_search_results(query, min_chunks)
+                if len(fallback_docs) >= min_chunks:
+                    print(f"[SEMANTIC] Fallback search successful: {len(fallback_docs)} chunks")
+                    return fallback_docs[:min_chunks]
+                else:
+                    # Final fallback to regular search
+                    return self.get_hierarchical_chunks(query, initial_k=min_chunks)
                 
         except Exception as e:
-            print(f"[SPEED] Early termination failed: {e}, using regular search")
-            # Fallback to regular search
-            return self.get_hierarchical_chunks(query, initial_k=15)
+            print(f"[SEMANTIC] Hybrid search failed: {e}, using regular search")
+            # Fallback to regular search with more chunks
+            return self.get_hierarchical_chunks(query, initial_k=min_chunks)
 
-    def limit_context_size(self, context: str, max_chars: int = 4000) -> str:
+    def limit_context_size(self, context: str, max_chars: int = 6000) -> str:
         """Limit context size for faster LLM processing while keeping reasonable size."""
         if len(context) <= max_chars:
             return context
@@ -2640,6 +2979,72 @@ Provide ONLY the short summary answer:"""
         limited_context = "\n\n".join(limited_chunks)
         print(f"[SPEED] Context limited to {len(limited_context)} chars ({len(limited_chunks)} chunks)")
         return limited_context
+
+    def filter_relevant_chunks(self, query, docs, threshold=0.7):
+        """Enhanced relevance filtering with multi-factor scoring for better quality"""
+        if not docs:
+            return []
+        
+        relevant_docs = []
+        query_terms = set(query.lower().split())
+        
+        # Remove common stop words for better relevance
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them'}
+        query_terms = {term for term in query_terms if term not in stop_words and len(term) > 2}
+        
+        for doc in docs:
+            # Multi-factor relevance scoring
+            score = 0
+            doc_text = doc.page_content.lower()
+            
+            # 1. Term frequency scoring (fast)
+            term_matches = sum(1 for term in query_terms if term in doc_text)
+            score += term_matches * 0.3
+            
+            # 2. Phrase matching (fast) - exact phrase matches get higher scores
+            query_lower = query.lower()
+            if query_lower in doc_text:
+                score += 2.0  # Exact phrase match gets high score
+            
+            # 3. Partial phrase matching
+            for term in query_terms:
+                if len(term) > 3:
+                    count = doc_text.count(term)
+                    score += count * 0.2
+            
+            # 4. Semantic similarity using embeddings (if available)
+            if hasattr(self, 'embedding_model') and self.embedding_model:
+                try:
+                    query_emb = self.embedding_model.encode([query])[0]
+                    doc_emb = self.embedding_model.encode([doc.page_content])[0]
+                    similarity = np.dot(query_emb, doc_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(doc_emb))
+                    score += similarity * 0.5
+                except Exception as e:
+                    print(f"[DEBUG] Embedding similarity calculation failed: {e}")
+                    pass
+            
+            # 5. Document metadata relevance (source, topic matching)
+            source = str(doc.metadata.get("source", "")).lower()
+            if any(term in source for term in query_terms):
+                score += 0.3  # Source filename relevance
+            
+            # 6. Content structure relevance (headers, lists, tables)
+            if any(marker in doc_text for marker in ['policy', 'procedure', 'requirement', 'standard', 'guideline']):
+                score += 0.2  # Policy-related content gets bonus
+            
+            if score >= threshold:
+                relevant_docs.append((doc, score))
+        
+        # Sort by relevance score and return top chunks
+        relevant_docs.sort(key=lambda x: x[1], reverse=True)
+        top_docs = [doc for doc, score in relevant_docs[:8]]  # Limit to top 8 most relevant
+        
+        print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(top_docs)} relevant chunks (threshold: {threshold})")
+        if top_docs:
+            top_scores = [score for _, score in relevant_docs[:3]]
+            print(f"[QUALITY] Top 3 relevance scores: {[f'{s:.3f}' for s in top_scores]}")
+        
+        return top_docs
 
     def get_concise_response(self, prompt: str) -> str:
         """Get concise response by limiting generation for faster processing."""
@@ -2682,24 +3087,83 @@ Provide ONLY the short summary answer:"""
 
 
 
-    def build_context_streamlined(self, docs: List[Document]) -> str:
-        """Build context with minimal string operations for maximum speed."""
+    def build_context_streamlined(self, docs, max_chars=3000, overlap_ratio=0.2):
+        """Build context with intelligent chunking and overlap for better quality"""
         if not docs:
-            return "No relevant chunks found."
+            return ""
         
-        # Pre-allocate list size for efficiency
-        context_parts = [None] * len(docs)
+        # Calculate optimal chunk size based on max_chars and number of docs
+        target_chunk_size = max_chars // max(len(docs), 1)
+        overlap_size = int(target_chunk_size * overlap_ratio)
         
-        # Process chunks with minimal operations
+        context_parts = []
+        current_length = 0
+        
         for i, doc in enumerate(docs):
-            content = doc.page_content.strip()
-            # Limit size in one operation
-            if len(content) > 300:
-                content = content[:300] + "..."
-            context_parts[i] = f"Chunk {i+1}: {content}"
+            if current_length >= max_chars:
+                break
+                
+            content = doc.page_content
+            source = os.path.basename(str(doc.metadata.get("source", "")))
+            page_info = doc.metadata.get("page", doc.metadata.get("page_number", ""))
+            
+            # Smart truncation with overlap preservation
+            if len(content) > target_chunk_size:
+                # Find natural break points (sentences, paragraphs)
+                sentences = content.split('.')
+                truncated = ""
+                for sentence in sentences:
+                    if len(truncated + sentence) <= target_chunk_size:
+                        truncated += sentence + "."
+                    else:
+                        break
+                
+                # Add overlap from next chunk for context continuity
+                if overlap_size > 0 and len(content) > target_chunk_size + overlap_size:
+                    overlap_start = target_chunk_size - overlap_size
+                    overlap_text = content[overlap_start:target_chunk_size]
+                    # Clean up overlap text
+                    overlap_text = overlap_text.strip()
+                    if overlap_text and not overlap_text.endswith('.'):
+                        overlap_text += "..."
+                    truncated += f" [continued: {overlap_text}]"
+            else:
+                truncated = content
+            
+            # Add source attribution and page info
+            if page_info and page_info != "?":
+                context_parts.append(f"[{source} - Page {page_info}]: {truncated}")
+            else:
+                context_parts.append(f"[{source}]: {truncated}")
+            
+            current_length += len(truncated)
+            
+            # Add separator between documents for clarity
+            if i < len(docs) - 1 and current_length < max_chars:
+                context_parts.append("---")
+                current_length += 3
         
-        # Single join operation (much faster than +=)
-        return "\n\n".join(context_parts)
+        final_context = "\n\n".join(context_parts)
+        
+        # Ensure context doesn't exceed max_chars
+        if len(final_context) > max_chars:
+            # Truncate at sentence boundary
+            sentences = final_context.split('.')
+            truncated_context = ""
+            for sentence in sentences:
+                if len(truncated_context + sentence + ".") <= max_chars:
+                    truncated_context += sentence + "."
+                else:
+                    break
+            
+            if truncated_context:
+                final_context = truncated_context + " [context truncated for length]"
+            else:
+                # Fallback: take first max_chars characters
+                final_context = final_context[:max_chars-50] + " [context truncated]"
+        
+        print(f"[QUALITY] Context built: {len(docs)} docs -> {len(final_context)} chars")
+        return final_context
 
     def process_chunks_parallel(self, docs: List[Document]) -> List[dict]:
         """Process retrieved chunks in parallel for faster preparation."""
@@ -2787,8 +3251,8 @@ Provide ONLY the short summary answer:"""
         
         # Use optimal chunk count for speed vs accuracy balance
         if initial_k is None:
-            initial_k = min(15, self.db.index.ntotal)  # 15 chunks for optimal speed
-            logging.info(f"[TIMING] Starting ultra-fast chunk-only retrieval for {initial_k} chunks (optimized for speed)")
+            initial_k = min(20, self.db.index.ntotal)  # 20 chunks for optimal balance
+            logging.info(f"[TIMING] Starting ultra-fast chunk-only retrieval for {initial_k} chunks (optimized for balance)")
         else:
             logging.info(f"[TIMING] Starting chunk-only retrieval with initial_k={initial_k}")
         
@@ -2915,7 +3379,13 @@ Respond with ONLY a number between 0 and 100."""
             # Try config model first (Ollama auto-detects GPU/CPU)
             try:
                 logging.info(f"[DEBUG] Attempting {MODEL_NAME} initialization")
-                self.gemma_model = OllamaLLM(model=MODEL_NAME)
+                self.gemma_model = OllamaLLM(
+            model=MODEL_NAME,
+            temperature=0.1,
+            num_ctx=8192,
+            num_predict=2048,
+            stop=None
+        )
                 self.confidence_model = self.gemma_model
                 logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully")
                 
@@ -2924,7 +3394,13 @@ Respond with ONLY a number between 0 and 100."""
                 try:
                     # Fallback to config model
                     logging.info(f"[DEBUG] Attempting {MODEL_NAME} initialization as fallback")
-                    self.llama_model = OllamaLLM(model=MODEL_NAME)
+                    self.llama_model = OllamaLLM(
+            model=MODEL_NAME,
+            temperature=0.1,
+            num_ctx=8192,
+            num_predict=2048,
+            stop=None
+        )
                     self.confidence_model = self.llama_model
                     logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully as fallback")
                 except Exception as e2:
@@ -3028,3 +3504,419 @@ Respond with ONLY a number between 0 and 100."""
         except Exception as e:
             logging.error(f"Error in vector database integrity validation: {e}")
             return {'status': 'error', 'message': str(e)}
+
+    def get_hybrid_semantic_chunks(self, query: str, initial_k: int = 15) -> List[Document]:
+        """Get chunks using hybrid semantic + vector approach for better coverage."""
+        hybrid_start = time.time()
+        
+        try:
+            print(f"[SEMANTIC] Starting hybrid semantic + vector search for query: '{query}'")
+            
+            # Step 1: Get vector similarity results
+            vector_start = time.time()
+            retriever = self.db.as_retriever(search_type="similarity", k=initial_k)
+            vector_docs = retriever.invoke(query)
+            vector_time = time.time() - vector_start
+            print(f"[SEMANTIC] Vector search found {len(vector_docs)} chunks in {vector_time:.3f}s")
+            
+            # Check if semantic search is enabled
+            if not getattr(self, 'enable_semantic_search', True):
+                print(f"[SEMANTIC] Semantic search disabled, returning {len(vector_docs)} vector chunks")
+                return vector_docs[:initial_k]
+            
+            # Step 2: Generate semantic variations of the query
+            semantic_start = time.time()
+            semantic_variations = self._generate_semantic_variations(query)
+            print(f"[SEMANTIC] Generated {len(semantic_variations)} semantic variations")
+            
+            # Step 3: Search with semantic variations (limited for performance)
+            semantic_docs = []
+            max_variations = getattr(self, 'semantic_search_variations', 10)
+            for variation in semantic_variations[:max_variations]:
+                try:
+                    retriever = self.db.as_retriever(search_type="similarity", k=6)
+                    variation_docs = retriever.invoke(variation)
+                    semantic_docs.extend(variation_docs)
+                except Exception as e:
+                    print(f"[SEMANTIC] Error searching variation '{variation}': {e}")
+            
+            semantic_time = time.time() - semantic_start
+            print(f"[SEMANTIC] Semantic search found {len(semantic_docs)} additional chunks in {semantic_time:.3f}s")
+            
+            # Step 4: Combine and deduplicate results
+            all_docs = vector_docs + semantic_docs
+            unique_docs = self._deduplicate_documents(all_docs)
+            
+            # Step 5: Re-rank by relevance to original query
+            ranked_docs = self._rerank_by_relevance(query, unique_docs)
+            
+            hybrid_time = time.time() - hybrid_start
+            print(f"[SEMANTIC] Hybrid search completed in {hybrid_time:.3f}s: {len(ranked_docs)} unique chunks")
+            
+            return ranked_docs[:initial_k]
+            
+        except Exception as e:
+            print(f"[SEMANTIC] Hybrid search failed: {e}, falling back to vector search")
+            return self.get_hierarchical_chunks(query, initial_k=initial_k)
+    
+    def _generate_semantic_variations(self, query: str) -> List[str]:
+        """Generate semantic variations of the query to catch related concepts."""
+        variations = []
+        
+        # Remove question numbers and formatting
+        clean_query = re.sub(r'^\d+\)\s*', '', query.strip())
+        
+        # Common semantic expansions
+        semantic_map = {
+            'patch': ['update', 'upgrade', 'fix', 'security update', 'vulnerability fix', 'maintenance', 'software update'],
+            'encryption': ['cryptography', 'encrypt', 'decrypt', 'cipher', 'secure communication', 'data protection', 'security controls'],
+            'password': ['authentication', 'login', 'credential', 'access control', 'identity', 'user management', 'security access'],
+            'backup': ['recovery', 'restore', 'data protection', 'disaster recovery', 'redundancy', 'business continuity', 'data backup'],
+            'access': ['permission', 'authorization', 'entry', 'login', 'authentication', 'user access', 'system access', 'data access'],
+            'security': ['protection', 'safeguard', 'defense', 'safety', 'risk mitigation', 'information security', 'cybersecurity'],
+            'policy': ['procedure', 'guideline', 'rule', 'standard', 'requirement', 'framework', 'governance', 'compliance'],
+            'compliance': ['regulation', 'standard', 'requirement', 'policy', 'audit', 'governance', 'regulatory', 'standards'],
+            'incident': ['event', 'breach', 'violation', 'problem', 'issue', 'security incident', 'response', 'management'],
+            'training': ['education', 'awareness', 'learning', 'instruction', 'knowledge', 'staff training', 'employee training'],
+            'asset': ['resource', 'system', 'equipment', 'infrastructure', 'hardware', 'software', 'data asset', 'information asset'],
+            'management': ['administration', 'oversight', 'governance', 'control', 'supervision', 'leadership', 'stewardship'],
+            'review': ['assessment', 'evaluation', 'audit', 'examination', 'inspection', 'analysis', 'verification'],
+            'approval': ['authorization', 'endorsement', 'sanction', 'consent', 'permission', 'acceptance', 'ratification'],
+            'communication': ['notification', 'awareness', 'information sharing', 'dissemination', 'reporting', 'transparency'],
+            'maintenance': ['upkeep', 'servicing', 'support', 'care', 'preservation', 'sustenance', 'maintenance schedule']
+        }
+        
+        # Generate variations based on semantic mapping
+        query_lower = clean_query.lower()
+        for key, synonyms in semantic_map.items():
+            if key in query_lower:
+                for synonym in synonyms:
+                    variation = clean_query.replace(key, synonym)
+                    if variation != clean_query:
+                        variations.append(variation)
+        
+        # Add common question variations
+        question_variations = [
+            f"What is the policy on {clean_query.lower()}?",
+            f"How does the organization handle {clean_query.lower()}?",
+            f"What are the requirements for {clean_query.lower()}?",
+            f"Is {clean_query.lower()} required?",
+            f"Does the policy cover {clean_query.lower()}?",
+            f"What are the procedures for {clean_query.lower()}?",
+            f"How is {clean_query.lower()} managed?",
+            f"What controls exist for {clean_query.lower()}?",
+            f"Are there standards for {clean_query.lower()}?",
+            f"What governance exists for {clean_query.lower()}?",
+            f"Who is responsible for {clean_query.lower()}?",
+            f"What documentation covers {clean_query.lower()}?",
+            f"Are there guidelines for {clean_query.lower()}?",
+            f"What framework addresses {clean_query.lower()}?",
+            f"How is {clean_query.lower()} implemented?"
+        ]
+        variations.extend(question_variations)
+        
+        # Limit to reasonable number of variations
+        return variations[:10]
+    
+    def _deduplicate_documents(self, docs: List[Document]) -> List[Document]:
+        """Remove duplicate documents based on content similarity."""
+        if not docs:
+            return docs
+        
+        unique_docs = []
+        seen_content = set()
+        
+        for doc in docs:
+            # Create a content hash (first 100 chars + length)
+            content_hash = f"{doc.page_content[:100]}_{len(doc.page_content)}"
+            
+            if content_hash not in seen_content:
+                seen_content.add(content_hash)
+                unique_docs.append(doc)
+        
+        print(f"[SEMANTIC] Deduplication: {len(docs)} -> {len(unique_docs)} unique chunks")
+        return unique_docs
+    
+    def _rerank_by_relevance(self, original_query: str, docs: List[Document]) -> List[Document]:
+        """Re-rank documents by relevance to the original query."""
+        if not docs:
+            return docs
+        
+        try:
+            # Calculate relevance scores
+            scored_docs = []
+            query_lower = original_query.lower()
+            query_words = set(query_lower.split())
+            
+            for doc in docs:
+                content_lower = doc.page_content.lower()
+                
+                # Score based on word overlap
+                word_matches = sum(1 for word in query_words if word in content_lower)
+                
+                # Score based on phrase matches
+                phrase_score = 0
+                for word in query_words:
+                    if len(word) > 3:  # Only meaningful words
+                        phrase_score += content_lower.count(word)
+                
+                # Combined score
+                total_score = word_matches * 2 + phrase_score
+                scored_docs.append((doc, total_score))
+            
+            # Sort by score (highest first)
+            scored_docs.sort(key=lambda x: x[1], reverse=True)
+            
+            # Return sorted documents
+            ranked_docs = [doc for doc, score in scored_docs]
+            print(f"[SEMANTIC] Re-ranking completed, top scores: {[score for _, score in scored_docs[:3]]}")
+            
+            return ranked_docs
+            
+        except Exception as e:
+            print(f"[SEMANTIC] Re-ranking failed: {e}, returning original order")
+            return docs
+
+    def get_fallback_search_results(self, query: str, min_chunks: int = 20) -> List[Document]:
+        """Fallback search strategy when primary methods don't find enough content."""
+        print(f"[FALLBACK] Starting fallback search for query: '{query}'")
+        
+        try:
+            # Strategy 1: Try with broader similarity threshold
+            print(f"[FALLBACK] Strategy 1: Broader similarity search")
+            retriever = self.db.as_retriever(search_type="similarity", k=25)
+            broad_docs = retriever.invoke(query)
+            print(f"[FALLBACK] Broad search found {len(broad_docs)} chunks")
+            
+            if len(broad_docs) >= min_chunks:
+                return broad_docs[:min_chunks]
+            
+            # Strategy 2: Try keyword-based search
+            print(f"[FALLBACK] Strategy 2: Keyword-based search")
+            query_words = query.lower().split()
+            keyword_docs = []
+            
+            # Search for each significant word
+            for word in query_words:
+                if len(word) > 3:  # Only meaningful words
+                    try:
+                        retriever = self.db.as_retriever(search_type="similarity", k=12)
+                        word_docs = retriever.invoke(word)
+                        keyword_docs.extend(word_docs)
+                    except Exception as e:
+                        print(f"[FALLBACK] Error searching for word '{word}': {e}")
+            
+            # Deduplicate and return
+            unique_keyword_docs = self._deduplicate_documents(keyword_docs)
+            print(f"[FALLBACK] Keyword search found {len(unique_keyword_docs)} unique chunks")
+            
+            if len(unique_keyword_docs) >= min_chunks:
+                return unique_keyword_docs[:min_chunks]
+            
+            # Strategy 3: Return all we found
+            print(f"[FALLBACK] Strategy 3: Returning all found chunks")
+            all_docs = broad_docs + unique_keyword_docs
+            unique_all = self._deduplicate_documents(all_docs)
+            return unique_all[:min_chunks]
+            
+        except Exception as e:
+            print(f"[FALLBACK] Fallback search failed: {e}")
+            # Last resort: return any chunks we can find
+            try:
+                retriever = self.db.as_retriever(search_type="similarity", k=min_chunks)
+                return retriever.invoke(query)
+            except Exception as final_e:
+                print(f"[FALLBACK] Final fallback failed: {final_e}")
+                return []
+
+    def _extract_fallback_answer(self, query: str, context: str) -> str:
+        """Extract relevant information from the context to provide a fallback answer."""
+        try:
+            print(f"[FALLBACK] Attempting to extract relevant information from context")
+            
+            # Extract key terms from the query
+            query_lower = query.lower()
+            key_terms = []
+            
+            # Look for specific terms related to the question
+            if 'backup' in query_lower:
+                key_terms.extend(['backup', 'recovery', 'snapshot', 'image', 'data protection'])
+            if 'management' in query_lower:
+                key_terms.extend(['management', 'approval', 'authorization', 'oversight'])
+            if 'outsourcer' in query_lower:
+                key_terms.extend(['outsourcer', 'vendor', 'third party', 'external'])
+            if 'scoped data' in query_lower:
+                key_terms.extend(['scoped data', 'sensitive data', 'confidential data'])
+            
+            # Also include general terms from the query
+            query_words = [word for word in query_lower.split() if len(word) > 3]
+            key_terms.extend(query_words)
+            
+            print(f"[FALLBACK] Looking for key terms: {key_terms}")
+            
+            # Search through context for relevant information
+            relevant_lines = []
+            context_lines = context.split('\n')
+            
+            for line in context_lines:
+                line_lower = line.lower()
+                # Check if line contains any key terms
+                if any(term in line_lower for term in key_terms):
+                    # Clean up the line and add it
+                    clean_line = line.strip()
+                    if clean_line and len(clean_line) > 20:  # Only meaningful lines
+                        relevant_lines.append(clean_line)
+            
+            print(f"[FALLBACK] Found {len(relevant_lines)} relevant lines")
+            
+            if relevant_lines:
+                # Take the most relevant lines (limit to avoid overwhelming)
+                selected_lines = relevant_lines[:5]  # Max 5 lines
+                fallback_answer = "Based on the available context, I found the following relevant information: " + " ".join(selected_lines)
+                return fallback_answer
+            else:
+                # If no direct matches, look for related policy information
+                policy_indicators = ['policy', 'procedure', 'requirement', 'standard', 'guideline']
+                policy_lines = []
+                
+                for line in context_lines:
+                    line_lower = line.lower()
+                    if any(indicator in line_lower for indicator in policy_indicators):
+                        clean_line = line.strip()
+                        if clean_line and len(clean_line) > 30:
+                            policy_lines.append(clean_line)
+                
+                if policy_lines:
+                    return f"While I don't see specific information about {query.split('?')[0]}, I found related policy information that may be relevant: " + " ".join(policy_lines[:3])
+                else:
+                    return "No specific information found about this topic in the available context."
+                    
+        except Exception as e:
+            print(f"[FALLBACK] Error in fallback extraction: {e}")
+            return "Error occurred while attempting to extract fallback information."
+
+    def build_enhanced_prompt(self, query, context, chat_history=None):
+        """Build optimized prompt for better answer quality"""
+        
+        # Extract key entities and concepts from query
+        key_terms = self._extract_key_entities(query)
+        
+        # Build context-aware instructions
+        instructions = f"""You are a professional compliance expert with deep knowledge of policies and procedures. Your task is to provide accurate, comprehensive answers based on the provided context.
+
+INSTRUCTIONS:
+1. CAREFULLY analyze the provided context for ANY relevant information
+2. Look for: {', '.join(key_terms)} and related concepts
+3. Consider indirect references, similar procedures, and related policies
+4. If you find ANY relevant information, provide a comprehensive answer
+5. Structure your response: Brief answer first, then supporting details
+6. Always start with "Yes" or "No" when applicable
+7. Cite specific sources from the context using [filename] format
+8. If information is incomplete, acknowledge what you know and what's missing
+9. Be precise, professional, and actionable
+10. Focus on compliance requirements, procedures, and policy details
+
+QUESTION: {query}
+
+CONTEXT:
+{context}
+
+ANSWER:"""
+        
+        return instructions
+    
+    def _extract_key_entities(self, query):
+        """Extract key entities and concepts from the query for better prompt engineering"""
+        # Remove common words and extract meaningful terms
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'what', 'when', 'where', 'why', 'how', 'who', 'which'}
+        
+        # Extract words and filter
+        words = query.lower().split()
+        key_terms = [word for word in words if word not in stop_words and len(word) > 2]
+        
+        # Add related terms for better context understanding
+        related_terms = []
+        for term in key_terms:
+            if term in ['backup', 'recovery']:
+                related_terms.extend(['data', 'disaster', 'business continuity'])
+            elif term in ['password', 'authentication']:
+                related_terms.extend(['security', 'access control', 'login'])
+            elif term in ['encryption', 'cryptography']:
+                related_terms.extend(['security', 'data protection', 'privacy'])
+            elif term in ['policy', 'procedure']:
+                related_terms.extend(['guideline', 'standard', 'requirement'])
+            elif term in ['compliance', 'regulation']:
+                related_terms.extend(['audit', 'governance', 'standard'])
+        
+        # Combine and deduplicate
+        all_terms = key_terms + related_terms
+        unique_terms = list(dict.fromkeys(all_terms))  # Preserve order while deduplicating
+        
+        return unique_terms[:10]  # Limit to top 10 terms
+
+    def validate_context_relevance(self, query, context, docs):
+        """Validate that context actually contains relevant information"""
+        
+        # Quick relevance check
+        query_terms = set(query.lower().split())
+        context_lower = context.lower()
+        
+        # Remove stop words from query terms
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'what', 'when', 'where', 'why', 'how', 'who', 'which'}
+        query_terms = {term for term in query_terms if term not in stop_words and len(term) > 2}
+        
+        # Check if key terms appear in context
+        term_coverage = sum(1 for term in query_terms if term in context_lower)
+        coverage_ratio = term_coverage / len(query_terms) if query_terms else 0
+        
+        print(f"[QUALITY] Context relevance check: {term_coverage}/{len(query_terms)} terms covered ({coverage_ratio:.2f})")
+        
+        if coverage_ratio < 0.3:  # Less than 30% term coverage
+            print(f"[QUALITY] Low context relevance ({coverage_ratio:.2f}), attempting to expand search")
+            
+            # Try to find more relevant chunks by lowering the threshold
+            if hasattr(self, 'db') and self.db:
+                try:
+                    # Expand search with lower similarity threshold
+                    expanded_docs = self._expand_search_scope(query, docs)
+                    if expanded_docs and len(expanded_docs) > len(docs):
+                        print(f"[QUALITY] Expanded search: {len(docs)} -> {len(expanded_docs)} docs")
+                        return self.build_context_streamlined(expanded_docs)
+                except Exception as e:
+                    print(f"[QUALITY] Search expansion failed: {e}")
+        
+        return context
+    
+    def _expand_search_scope(self, query, current_docs):
+        """Expand search scope to find more relevant documents"""
+        try:
+            if not hasattr(self, 'db') or not self.db:
+                return current_docs
+            
+            # Get current document IDs to avoid duplicates
+            current_ids = {doc.metadata.get('chunk_id', 0) for doc in current_docs}
+            
+            # Search with lower similarity threshold
+            expanded_docs = self.db.similarity_search(
+                query, 
+                k=min(15, len(current_docs) + 5),  # Get a few more docs
+                fetch_k=20  # Fetch more candidates
+            )
+            
+            # Filter out duplicates and add new relevant docs
+            new_docs = []
+            for doc in expanded_docs:
+                doc_id = doc.metadata.get('chunk_id', 0)
+                if doc_id not in current_ids:
+                    new_docs.append(doc)
+                    current_ids.add(doc_id)
+            
+            # Combine current and new docs, prioritizing current ones
+            combined_docs = current_docs + new_docs
+            
+            # Re-filter with lower threshold
+            return self.filter_relevant_chunks(query, combined_docs, threshold=0.5)
+            
+        except Exception as e:
+            print(f"[QUALITY] Error expanding search scope: {e}")
+            return current_docs

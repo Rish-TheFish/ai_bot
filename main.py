@@ -8,6 +8,9 @@ import io
 import csv
 
 # Handle PDF imports with fallbacks
+PDF_READER_AVAILABLE = False
+PdfReader = None
+
 try:
     from PyPDF2 import PdfReader
     PDF_READER_AVAILABLE = True
@@ -25,6 +28,10 @@ except ImportError:
         except ImportError:
             PDF_READER_AVAILABLE = False
             print("⚠ Warning: No PDF reader available. PDF uploads will not work.")
+
+# Ensure PdfReader is available globally
+if not PDF_READER_AVAILABLE:
+    print("⚠ PDF processing will be disabled - no PDF reader available")
 
 from docx import Document as DocxReader
 import xml.etree.ElementTree as ET
@@ -146,8 +153,6 @@ def init_db():
             username VARCHAR(255) UNIQUE NOT NULL,
             email VARCHAR(255) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
-            email_verified BOOLEAN DEFAULT FALSE,
-            verification_token VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -213,9 +218,33 @@ def get_user_id():
     return None
 
 def get_session_id():
-    """Get or create session ID"""
-    if 'session_id' not in session:
+    """Get or create session ID for guest users"""
+    # For guest users (no user_id), always create a new session_id
+    # This ensures each guest visit gets a fresh session
+    if 'user_id' not in session:
+        # Clear any existing guest session data
+        if 'session_id' in session:
+            old_session_id = session['session_id']
+            # Clean up old guest session data from database
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
+                conn.commit()
+                conn.close()
+                print(f"Cleaned up old guest session: {old_session_id}")
+            except Exception as e:
+                print(f"Error cleaning up old guest session: {e}")
+        
+        # Generate new session_id for this guest visit
         session['session_id'] = secrets.token_urlsafe(32)
+        session['guest_visit_time'] = datetime.now().isoformat()
+        print(f"New guest session created: {session['session_id']}")
+    
+    # For logged-in users, maintain persistent session_id
+    elif 'session_id' not in session:
+        session['session_id'] = secrets.token_urlsafe(32)
+    
     return session['session_id']
 
 def get_chat_history(limit=None, session_key=None):
@@ -227,14 +256,28 @@ def get_chat_history(limit=None, session_key=None):
     limit_clause = ''
     if limit is not None:
         limit_clause = f'LIMIT {int(limit)}'
+    
     if session_key:
-        cursor.execute(f'''
-            SELECT question, answer, confidence, sources FROM chat_history 
-            WHERE session_id = %s 
-            ORDER BY timestamp {order} 
-            {limit_clause}
-        ''', (session_key,))
+        # If session_key is provided, use it directly
+        # But ensure guest users can't access logged-in user data
+        if not user_id:
+            # Guest users can only access their own session data
+            cursor.execute(f'''
+                SELECT question, answer, confidence, sources FROM chat_history 
+                WHERE session_id = %s AND user_id IS NULL
+                ORDER BY timestamp {order} 
+                {limit_clause}
+            ''', (session_key,))
+        else:
+            # Logged-in users can access their own session data
+            cursor.execute(f'''
+                SELECT question, answer, confidence, sources FROM chat_history 
+                WHERE session_id = %s AND user_id = %s
+                ORDER BY timestamp {order} 
+                {limit_clause}
+            ''', (session_key, user_id))
     elif user_id:
+        # For logged-in users, get their persistent chat history
         cursor.execute(f'''
             SELECT question, answer, confidence, sources FROM chat_history 
             WHERE user_id = %s 
@@ -242,13 +285,15 @@ def get_chat_history(limit=None, session_key=None):
             {limit_clause}
         ''', (user_id,))
     else:
+        # For guest users, get only current session data
         session_id = get_session_id()
         cursor.execute(f'''
             SELECT question, answer, confidence, sources FROM chat_history 
-            WHERE session_id = %s 
+            WHERE session_id = %s AND user_id IS NULL
             ORDER BY timestamp {order} 
             {limit_clause}
         ''', (session_id,))
+    
     history = cursor.fetchall()
     conn.close()
     return [{
@@ -264,6 +309,7 @@ def save_chat_history(question, answer, confidence, sources, session_key=None):
     cursor = conn.cursor()
     user_id = get_user_id()
     session_id = session_key if session_key else get_session_id()
+    
     try:
         confidence = float(confidence) if confidence is not None else None
     except Exception:
@@ -276,6 +322,14 @@ def save_chat_history(question, answer, confidence, sources, session_key=None):
     else:
         # Legacy string format
         sources_str = str(sources) if sources else 'N/A'
+    
+    # For guest users, ensure we're using the current session_id
+    if not user_id and not session_key:
+        # Double-check we have the latest session_id for guests
+        current_session_id = get_session_id()
+        if current_session_id != session_id:
+            session_id = current_session_id
+            print(f"Updated guest session_id to: {session_id}")
     
     cursor.execute('''
         INSERT INTO chat_history (user_id, session_id, question, answer, confidence, sources)
@@ -309,6 +363,7 @@ def get_or_init_ai_app():
         try:
             ai_app = AIApp(None)
             ai_app_ready = True
+            ai_app_error = None
             add_backend_log("AI app created successfully for empty documents")
         except Exception as e:
             add_backend_log(f"Error creating AI app: {e}")
@@ -316,72 +371,157 @@ def get_or_init_ai_app():
             ai_app_error = str(e)
         return ai_app
     
-    # Start initialization in background
-    ai_app_initializing = True
-    add_backend_log("Starting AI app initialization in background...")
-    
-    def init_ai_background():
-        global ai_app, ai_app_initializing, ai_app_ready, ai_app_error
-        try:
-            add_backend_log("Creating AI app instance...")
-            add_backend_log("Step 1: Starting AIApp constructor...")
-            ai_app = AIApp(None)
-            add_backend_log("Step 2: AI app instance created successfully")
-            
-            # Check if database exists and is valid
-            add_backend_log("Checking if database exists and is valid...")
-            try:
-                db_valid = ai_app.database_exists_and_valid()
-                add_backend_log(f"Database validation result: {db_valid}")
-                
-                if db_valid:
-                    add_backend_log("Loading existing vector database...")
-                    ai_app.load_vector_db()
-                    ai_app_ready = True
-                    add_backend_log("AI app ready with existing database")
-                else:
-                    # Check if there are documents to process
-                    add_backend_log("Checking for documents to process...")
-                    if os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH)):
-                        add_backend_log("Building vector database from documents...")
-                        ai_app.build_db("initial_build")
-                        ai_app_ready = True
-                        add_backend_log("AI app ready with new database")
-                    else:
-                        add_backend_log("No documents found - AI app ready for uploads")
-                        ai_app_ready = True
-            except Exception as db_error:
-                add_backend_log(f"Error during database validation/loading: {db_error}")
-                # Set as ready anyway so the app can function
+    # Quick check: if database already exists and is valid, try to load it immediately
+    try:
+        from ai_bot import AIApp
+        temp_ai_app = AIApp(None)
+        if temp_ai_app.database_exists_and_valid():
+            add_backend_log("Database exists - attempting quick load...")
+            if temp_ai_app.load_vector_db() and temp_ai_app.db is not None:
+                ai_app = temp_ai_app
                 ai_app_ready = True
-                add_backend_log("AI app ready despite database error")
+                ai_app_error = None
+                add_backend_log("Database loaded successfully in quick initialization!")
+                return ai_app
+            else:
+                add_backend_log("Quick load failed, will use background initialization")
+        else:
+            add_backend_log("No valid database found, will use background initialization")
+    except Exception as e:
+        add_backend_log(f"Quick initialization check failed: {e}, will use background initialization")
+    
+    # CRITICAL FIX: Make AI app ready immediately, then build database in background
+    add_backend_log("Creating AI app instance for immediate use...")
+    try:
+        ai_app = AIApp(None, skip_db_init=True)  # Skip database init for immediate readiness
+        # Mark as ready immediately so users can start asking questions
+        ai_app_ready = True
+        ai_app_error = None
+        add_backend_log("AI app ready immediately! Database will build in background.")
+        
+        # Start database building in background (non-blocking)
+        def build_db_background():
+            global ai_app_error
+            try:
+                add_backend_log("Starting background database build...")
+                if os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH)):
+                    add_backend_log("Building vector database from documents in background...")
+                    ai_app.build_db("background_build")
+                    if ai_app.db is not None:
+                        add_backend_log("Background database build completed successfully!")
+                        ai_app_error = None
+                    else:
+                        ai_app_error = "Background database build failed"
+                        add_backend_log("Background database build failed")
+                else:
+                    add_backend_log("No documents to process in background")
+            except Exception as e:
+                ai_app_error = f"Background database build error: {e}"
+                add_backend_log(f"Background database build error: {e}")
+        
+        # Start background database building
+        db_thread = threading.Thread(target=build_db_background, daemon=True)
+        db_thread.start()
+        
+        return ai_app
+        
+    except Exception as e:
+        ai_app_error = str(e)
+        add_backend_log(f"Error creating AI app: {e}")
+        # Fall back to background initialization
+        ai_app_initializing = True
+        add_backend_log("Falling back to background initialization...")
+        
+        def init_ai_background():
+            global ai_app, ai_app_initializing, ai_app_ready, ai_app_error
+            try:
+                add_backend_log("Creating AI app instance in background...")
+                ai_app = AIApp(None)
+                add_backend_log("AI app instance created successfully in background")
                 
-        except Exception as e:
-            ai_app_error = str(e)
-            add_backend_log(f"Error initializing AI app: {e}")
-            # Set as ready anyway so the app can function
-            ai_app_ready = True
-            add_backend_log("AI app ready despite initialization error")
-        finally:
-            ai_app_initializing = False
-            add_backend_log("Background initialization completed")
-    
-    # Start background thread with timeout
-    thread = threading.Thread(target=init_ai_background, daemon=True)
-    thread.start()
-    
-    # Set a timeout to prevent hanging
-    def timeout_handler():
-        global ai_app_initializing, ai_app_ready, ai_app_error
-        time.sleep(120)  # 120 second timeout (increased to allow for model loading and database building)
-        if ai_app_initializing:
-            add_backend_log("Background initialization timed out after 120 seconds - setting as ready")
-            ai_app_initializing = False
-            ai_app_ready = True
-            ai_app_error = "Initialization timed out"
-    
-    timeout_thread = threading.Thread(target=timeout_handler, daemon=True)
-    timeout_thread.start()
+                # Check if database exists and is valid
+                add_backend_log("Checking if database exists and is valid...")
+                try:
+                    db_valid = ai_app.database_exists_and_valid()
+                    add_backend_log(f"Database validation result: {db_valid}")
+                    
+                    if db_valid:
+                        add_backend_log("Loading existing vector database...")
+                        load_success = ai_app.load_vector_db()
+                        if load_success and ai_app.db is not None:
+                            ai_app_ready = True
+                            ai_app_error = None
+                            add_backend_log("AI app ready with existing database")
+                        else:
+                            add_backend_log("Database load failed, will rebuild...")
+                            ai_app_ready = False
+                    else:
+                        # Check if there are documents to process
+                        add_backend_log("Checking for documents to process...")
+                        if os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH)):
+                            add_backend_log("Building vector database from documents...")
+                            ai_app.build_db("initial_build")
+                            if ai_app.db is not None:
+                                ai_app_ready = True
+                                ai_app_error = None
+                                add_backend_log("AI app ready with new database")
+                            else:
+                                ai_app_ready = False
+                                ai_app_error = "Database build failed"
+                        else:
+                            add_backend_log("No documents found - AI app ready for uploads")
+                            ai_app_ready = True
+                            ai_app_error = None
+                except Exception as db_error:
+                    add_backend_log(f"Error during database validation/loading: {db_error}")
+                    # Only set as ready if we actually have a working database
+                    if ai_app.db is not None:
+                        ai_app_ready = True
+                        ai_app_error = None
+                        add_backend_log("AI app ready despite database error")
+                    else:
+                        ai_app_ready = False
+                        ai_app_error = f"Database error: {db_error}"
+                        add_backend_log("AI app not ready - database failed to load")
+                    
+            except Exception as e:
+                ai_app_error = str(e)
+                add_backend_log(f"Error initializing AI app: {e}")
+                # Only set as ready if we have a working database
+                if ai_app and ai_app.db is not None:
+                    ai_app_ready = True
+                    add_backend_log("AI app ready despite initialization error")
+                else:
+                    ai_app_ready = False
+                    add_backend_log("AI app not ready due to initialization error")
+            finally:
+                ai_app_initializing = False
+                add_backend_log("Background initialization completed")
+        
+        # Start background thread
+        thread = threading.Thread(target=init_ai_background, daemon=True)
+        thread.start()
+        
+        # Set a timeout to prevent hanging
+        def timeout_handler():
+            global ai_app_initializing, ai_app_ready, ai_app_error
+            time.sleep(300)  # 5 minute timeout for background initialization
+            if ai_app_initializing:
+                add_backend_log("Background initialization timed out after 5 minutes - checking database state")
+                ai_app_initializing = False
+                
+                # Check if we actually have a working database before setting as ready
+                if ai_app and ai_app.db is not None:
+                    ai_app_ready = True
+                    ai_app_error = None
+                    add_backend_log("Timeout occurred but database is loaded - setting as ready")
+                else:
+                    ai_app_ready = False
+                    ai_app_error = "Background initialization timed out - database not loaded"
+                    add_backend_log("Timeout occurred and database not loaded - app not ready")
+        
+        timeout_thread = threading.Thread(target=timeout_handler, daemon=True)
+        timeout_thread.start()
     
     return ai_app
 
@@ -394,11 +534,79 @@ def ensure_ai_app_ready():
         if ai_app is None:
             return False
     
+    # Additional check: ensure database is actually loaded
+    if ai_app_ready and ai_app and ai_app.db is None:
+        add_backend_log("AI app marked as ready but database not loaded - forcing refresh")
+        try:
+            if ai_app.database_exists_and_valid():
+                ai_app.load_vector_db()
+                if ai_app.db is not None:
+                    add_backend_log("Database loaded successfully during refresh")
+                else:
+                    ai_app_ready = False
+                    add_backend_log("Database load failed during refresh")
+            else:
+                ai_app_ready = False
+                add_backend_log("Database validation failed during refresh")
+        except Exception as e:
+            ai_app_ready = False
+            add_backend_log(f"Error during database refresh: {e}")
+    
     return ai_app_ready
 
+def cleanup_old_guest_sessions():
+    """Clean up old guest sessions from database"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Delete guest sessions older than 24 hours
+        cursor.execute('''
+            DELETE FROM chat_history 
+            WHERE user_id IS NULL 
+            AND timestamp < NOW() - INTERVAL '24 hours'
+        ''')
+        
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if deleted_count > 0:
+            print(f"Cleaned up {deleted_count} old guest session records")
+            add_backend_log(f"Cleaned up {deleted_count} old guest session records")
+            
+    except Exception as e:
+        print(f"Error cleaning up old guest sessions: {e}")
 
 @app.route('/')
 def index():
+    # Clean up old guest sessions periodically
+    cleanup_old_guest_sessions()
+    
+    # For guest users, ensure they get a fresh session
+    if 'user_id' not in session:
+        # Clear any existing guest session data
+        if 'session_id' in session:
+            old_session_id = session['session_id']
+            # Clean up old guest session data from database
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
+                conn.commit()
+                conn.close()
+                print(f"Cleaned up old guest session on page load: {old_session_id}")
+            except Exception as e:
+                print(f"Error cleaning up old guest session on page load: {e}")
+        
+        # Clear old session data and create new session_id
+        session.pop('session_id', None)
+        session.pop('guest_visit_time', None)
+        # New session_id will be created when get_session_id() is called
+        
+        # Configure session for guest user
+        configure_session_for_user()
+    
     return render_template('index.html')
 
 @app.route('/register', methods=['POST'])
@@ -430,7 +638,6 @@ def register():
     
     try:
         password_hash = hash_password(password)
-        # verification_token = secrets.token_urlsafe(32)  # Not used
         
         cursor.execute('''
             INSERT INTO users (username, email, password_hash) 
@@ -446,6 +653,7 @@ def register():
         # Auto-login after registration
         session['user_id'] = user_id
         session['username'] = username
+        configure_session_for_user()  # Configure session for logged-in user
         
         conn.close()
         add_backend_log(f"User registered: {username} ({email})")
@@ -479,18 +687,16 @@ def login():
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
     cursor.execute('''
-        SELECT id, username, password_hash, email_verified 
+        SELECT id, username, password_hash
         FROM users WHERE username = %s
     ''', (username,))
     user = cursor.fetchone()
     conn.close()
     
     if user and user['password_hash'] == hash_password(password):
-        if not user['email_verified']:
-            return jsonify({'error': 'Please verify your email before logging in'})
-        
         session['user_id'] = user['id']
         session['username'] = user['username']
+        configure_session_for_user()  # Configure session for logged-in user
         add_backend_log(f"User logged in: {username}")
         return jsonify({'status': 'success', 'message': 'Login successful'})
     else:
@@ -500,6 +706,7 @@ def login():
 def logout():
     session.pop('user_id', None)
     session.pop('username', None)
+    configure_session_for_user()  # Configure session for guest user
     return jsonify({'status': 'success', 'message': 'Logout successful'})
 
 @app.route('/user_status', methods=['GET'])
@@ -692,28 +899,41 @@ def get_document_status():
         add_backend_log("Documents exist but vector database not loaded - forcing refresh")
         try:
             if ai_app.database_exists_and_valid():
-                ai_app.load_vector_db()
-                ai_app_ready = True
-                add_backend_log("Vector database loaded successfully")
+                load_success = ai_app.load_vector_db()
+                if load_success and ai_app.db is not None:
+                    ai_app_ready = True
+                    add_backend_log("Vector database loaded successfully")
+                else:
+                    ai_app_ready = False
+                    add_backend_log("Vector database load failed")
             else:
                 ai_app.build_db("force_refresh")
-                ai_app_ready = True
-                add_backend_log("Vector database rebuilt successfully")
+                if ai_app.db is not None:
+                    ai_app_ready = True
+                    add_backend_log("Vector database rebuilt successfully")
+                else:
+                    ai_app_ready = False
+                    add_backend_log("Vector database rebuild failed")
         except Exception as e:
             add_backend_log(f"Error refreshing vector database: {e}")
+            ai_app_ready = False
     
     try:
         result = ai_app.get_document_status()
-        result['ready'] = True
+        result['ready'] = ai_app_ready
         result['database_loaded'] = ai_app.db is not None
+        result['initializing'] = ai_app_initializing
+        result['error'] = ai_app_error
         return jsonify(result)
     except Exception as e:
         return jsonify({
             'status': 'ready_with_warning',
             'message': f'AI Assistant ready (with warning: {str(e)})',
-            'ready': True,
+            'ready': ai_app_ready,
             'warning': str(e),
-            'database_loaded': ai_app.db is not None if ai_app else False
+            'database_loaded': ai_app.db is not None if ai_app else False,
+            'initializing': ai_app_initializing,
+            'error': ai_app_error
         })
 
 @app.route('/ask', methods=['POST'])
@@ -726,6 +946,8 @@ def ask_question():
     if not ai_app_ready:
         if ai_app_initializing:
             return jsonify({'error': 'AI Assistant is still initializing. Please wait a moment and try again.'})
+        elif ai_app_error:
+            return jsonify({'error': f'AI Assistant error: {ai_app_error}'})
         else:
             # Trigger initialization
             ai_app = get_or_init_ai_app()
@@ -734,6 +956,10 @@ def ask_question():
     if not ai_app:
         return jsonify({'error': 'AI Assistant not available'})
     
+    # Additional check: ensure database is actually loaded
+    if ai_app.db is None:
+        return jsonify({'error': 'AI Assistant database not loaded. Please wait for initialization to complete.'})
+    
     data = request.get_json()
     question = data.get('question', '')
     topic_ids = data.get('topic_ids', ['none'])
@@ -741,6 +967,24 @@ def ask_question():
     
     if not question:
         return jsonify({'error': 'Question is required'})
+    
+    # Security check: ensure guest users can't access other users' data
+    user_id = get_user_id()
+    if not user_id and session_key:
+        # For guest users, validate that the session_key belongs to them
+        # and doesn't contain any logged-in user data
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT COUNT(*) FROM chat_history 
+            WHERE session_id = %s AND user_id IS NOT NULL
+        ''', (session_key,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        if count > 0:
+            # This session_key contains logged-in user data, reject the request
+            return jsonify({'error': 'Invalid session access'})
     
     chat_history = get_chat_history(session_key=session_key)
     
@@ -810,11 +1054,12 @@ def upload_questions():
     # Process questions in parallel with timeouts
     results = process_questions_parallel(questions, job_id)
     
-    # Update progress to completed
+    # Update progress to completed and store results
     questionnaire_progress[job_id].update({
         'status': 'completed',
         'completed_questions': len(results),
-        'message': f'Completed processing {len(results)} questions'
+        'message': f'Completed processing {len(results)} questions',
+        'results': results  # Store the results for later retrieval
     })
     
     add_backend_log(f"Completed processing {len(results)} questions")
@@ -840,22 +1085,34 @@ def extract_questions_from_file(file):
             questions = extract_questions_from_text(content)
         
         elif ext == 'pdf':
+            if not PDF_READER_AVAILABLE:
+                add_backend_log("PDF processing not available - no PDF reader installed")
+                return []
+            
             file.stream.seek(0)
-            pdf = PdfReader(io.BytesIO(file.stream.read()))
-            full_text = ""
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    full_text += text + "\n"
-            questions = extract_questions_from_text(full_text)
+            try:
+                pdf = PdfReader(io.BytesIO(file.stream.read()))
+                full_text = ""
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        full_text += text + "\n"
+                questions = extract_questions_from_text(full_text)
+            except Exception as pdf_error:
+                add_backend_log(f"Error processing PDF: {pdf_error}")
+                return []
         
         elif ext == 'docx':
             file.stream.seek(0)
-            doc = DocxReader(io.BytesIO(file.stream.read()))
-            for para in doc.paragraphs:
-                line = para.text.strip()
-                if line and len(line) > 10:
-                    questions.append(line)
+            try:
+                doc = DocxReader(io.BytesIO(file.stream.read()))
+                for para in doc.paragraphs:
+                    line = para.text.strip()
+                    if line and len(line) > 10:
+                        questions.append(line)
+            except Exception as docx_error:
+                add_backend_log(f"Error processing DOCX: {docx_error}")
+                return []
         
         else:
             add_backend_log(f"Unsupported file type: {ext}")
@@ -958,14 +1215,15 @@ def process_questions_parallel(questions, job_id):
         }
         
         # Collect results as they complete (with timeout)
-        for future in as_completed(future_to_question, timeout=300):  # 5 minute total timeout
+        # Single questions take ~23 seconds, so allow 2 minutes per question for safety
+        for future in as_completed(future_to_question, timeout=600):  # 10 minute total timeout
             question, index = future_to_question[future]
             try:
-                result = future.result(timeout=60)  # 1 minute per question timeout
+                result = future.result(timeout=120)  # 2 minutes per question timeout
                 results.append(result)
                 add_backend_log(f"Completed question {index+1}/{len(questions)}: {question[:50]}...")
             except TimeoutError:
-                add_backend_log(f"Question {index+1} timed out after 60 seconds")
+                add_backend_log(f"Question {index+1} timed out after 120 seconds")
                 results.append({
                     'question': question,
                     'answer': 'Processing timed out - question was too complex or system was overloaded',
@@ -1008,7 +1266,9 @@ def process_single_question(question, index, job_id):
                 'sources': {'summary': 'AI not ready', 'detailed': 'AI Assistant not initialized'}
             }
         
-        # Process the question
+        # Process the question using the EXACT same method as single questions
+        # This ensures questionnaire questions get the same quality and speed as individual questions
+        # Note: Questions are already cleaned in extract_questions_from_file()
         result = ai_app.handle_question(question)
         
         if 'error' in result:
@@ -1043,7 +1303,7 @@ def process_single_question(question, index, job_id):
             questionnaire_progress[job_id]['message'] = f'Completed {questionnaire_progress[job_id]["completed_questions"]} of {questionnaire_progress[job_id]["total_questions"]} questions'
         
         return {
-            'question': question,
+            'question': question,  # Keep original question for display
             'answer': answer,
             'confidence': confidence,
             'sources': sources_data
@@ -1119,6 +1379,80 @@ def generate_questionnaire_results(results, filename, job_id):
     except Exception as e:
         add_backend_log(f"Error generating results: {e}")
         return jsonify({'error': f'Error generating results: {str(e)}'})
+
+@app.route('/questionnaire_results/<job_id>', methods=['GET'])
+def get_questionnaire_results(job_id):
+    """Get the final results for a completed questionnaire job"""
+    try:
+        if job_id not in questionnaire_progress:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        progress = questionnaire_progress[job_id]
+        if progress['status'] != 'completed':
+            return jsonify({'error': 'Job not yet completed'}), 400
+        
+        # Return the results that were stored during processing
+        if 'results' not in progress:
+            return jsonify({'error': 'No results found for this job'}), 404
+        
+        results = progress['results']
+        
+        # Generate CSV info
+        output = io.StringIO()
+        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+        writer.writerow(['Question', 'Answer', 'Source', 'Confidence'])
+        
+        for row in results:
+            try:
+                sources_str = ""
+                if isinstance(row['sources'], dict):
+                    sources_str = row['sources'].get('summary', 'N/A')
+                else:
+                    sources_str = str(row['sources'])
+                
+                clean_answer = re.sub(r'\s+', ' ', str(row['answer'])).strip()
+                
+                question = str(row['question']).encode('utf-8', errors='ignore').decode('utf-8')
+                answer = clean_answer.encode('utf-8', errors='ignore').decode('utf-8')
+                source = sources_str.encode('utf-8', errors='ignore').decode('utf-8')
+                confidence = str(row['confidence'])
+                
+                writer.writerow([question, answer, source, confidence])
+            except Exception as row_error:
+                add_backend_log(f"Error writing CSV row: {row_error}")
+                writer.writerow(['Error processing question', 'Error processing answer', 'N/A', '0'])
+        
+        output.seek(0)
+        
+        # Create temporary file
+        import tempfile
+        import uuid
+        
+        unique_id = str(uuid.uuid4())
+        csv_filename = f'answers_{len(results)}_questions_{unique_id}.csv'
+        
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        temp_file.write(output.getvalue())
+        temp_file.close()
+        
+        # Store file mapping
+        if not hasattr(app, 'temp_files'):
+            app.temp_files = {}
+        app.temp_files[unique_id] = temp_file.name
+        
+        return jsonify({
+            'questions': [r['question'] for r in results],
+            'answers': [r['answer'] for r in results],
+            'confidences': [r['confidence'] for r in results],
+            'sources': [r['sources'] for r in results],
+            'csv_id': unique_id,
+            'filename': csv_filename,
+            'job_id': job_id
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error getting questionnaire results: {e}")
+        return jsonify({'error': f'Error getting results: {str(e)}'})
 
 @app.route('/download_csv/<file_id>', methods=['GET'])
 def download_csv(file_id):
@@ -2635,6 +2969,91 @@ def check_database_status():
     except Exception as e:
         add_backend_log(f"Error checking database status: {e}")
         return jsonify({'error': str(e)})
+
+@app.route('/clear_guest_session', methods=['POST'])
+def clear_guest_session():
+    """Clear guest session data and create a fresh session"""
+    if 'user_id' not in session:  # Only for guest users
+        old_session_id = session.get('session_id')
+        if old_session_id:
+            # Clean up old guest session data from database
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
+                conn.commit()
+                conn.close()
+                print(f"Cleaned up old guest session: {old_session_id}")
+            except Exception as e:
+                print(f"Error cleaning up old guest session: {e}")
+        
+        # Clear session data and create new session_id
+        session.pop('session_id', None)
+        session.pop('guest_visit_time', None)
+        new_session_id = get_session_id()
+        
+        return jsonify({
+            'status': 'success', 
+            'message': 'Guest session cleared and refreshed',
+            'new_session_id': new_session_id
+        })
+    
+    return jsonify({'status': 'error', 'message': 'This endpoint is only for guest users'})
+
+@app.route('/clear_guest_session_on_exit', methods=['POST'])
+def clear_guest_session_on_exit():
+    """Clear guest session data when user navigates away or closes browser"""
+    if 'user_id' not in session:  # Only for guest users
+        session_id = session.get('session_id')
+        if session_id:
+            # Clean up guest session data from database
+            try:
+                conn = get_db()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (session_id,))
+                conn.commit()
+                conn.close()
+                print(f"Cleaned up guest session on exit: {session_id}")
+            except Exception as e:
+                print(f"Error cleaning up guest session on exit: {e}")
+        
+        # Clear session data
+        session.pop('session_id', None)
+        session.pop('guest_visit_time', None)
+        
+        return jsonify({'status': 'success', 'message': 'Guest session cleared'})
+    
+    return jsonify({'status': 'error', 'message': 'This endpoint is only for guest users'})
+
+# Clean up old progress entries every hour
+def schedule_cleanup_tasks():
+    """Schedule periodic cleanup tasks"""
+    def cleanup_task():
+        while True:
+            try:
+                time.sleep(3600)  # Run every hour
+                cleanup_old_progress()
+                cleanup_old_guest_sessions()
+            except Exception as e:
+                print(f"Error in cleanup task: {e}")
+    
+    cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
+    cleanup_thread.start()
+    print("Cleanup tasks scheduled to run every hour")
+
+# Start cleanup tasks
+schedule_cleanup_tasks()
+
+def configure_session_for_user():
+    """Configure session settings based on user type"""
+    if 'user_id' in session:
+        # Logged-in users get longer sessions
+        app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+        session.permanent = True
+    else:
+        # Guest users get very short sessions
+        app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+        session.permanent = False
 
 if __name__ == '__main__':
     print('Flask app starting...')

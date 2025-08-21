@@ -319,8 +319,8 @@
             white-space: pre-wrap;
             word-break: break-word;
             max-width: 100%;
-            max-height: 200px;
-            overflow: auto;
+            /* Removed height restriction to show full AI responses */
+            overflow: visible;
         }
     </style>
 </head>
@@ -900,10 +900,14 @@ window.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 updateBtnLabel();
+                // Also update the Upload Questionnaire button
+                updateUploadQuestionnaireButton();
             });
             // Set initial state: No Topics checked
             menu.querySelector('.form-check-input[value="none"]').checked = true;
             updateBtnLabel();
+            // Update the Upload Questionnaire button initially
+            updateUploadQuestionnaireButton();
             attachChatTopicsDropdownHandler && attachChatTopicsDropdownHandler();
         });
     // On DOMContentLoaded, also enforce chat bar state
@@ -956,10 +960,10 @@ window.addEventListener('DOMContentLoaded', function() {
             addMessage('🧑 You: ' + item.question, 'user');
             
             // Format answer with confidence and sources if available
-            let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
-            if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
-                answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
-            }
+            //let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
+            //if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
+              //  answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
+            //}
             if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
                 answerText += `<br><strong>Sources:</strong> ${item.sources}`;
             }
@@ -1605,11 +1609,13 @@ function checkUserStatus() {
             loginBtn.classList.add('hidden');
             registerBtn.classList.add('hidden');
             logoutBtn.classList.remove('hidden');
+            window.isLoggedInUser = true;  // Set flag for logged-in user
         } else {
             userStatusText.textContent = 'Guest User';
             loginBtn.classList.remove('hidden');
             registerBtn.classList.remove('hidden');
             logoutBtn.classList.add('hidden');
+            window.isLoggedInUser = false;  // Set flag for guest user
         }
     });
 }
@@ -1635,6 +1641,17 @@ document.getElementById('loginSubmitBtn').addEventListener('click', function() {
             // Hide modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('loginModal'));
             if (modal) modal.hide();
+            
+            // Clear any existing guest session data before checking user status
+            if (!window.isLoggedInUser) {
+                fetch('/clear_guest_session', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                }).catch(error => {
+                    console.log('Could not clear guest session:', error);
+                });
+            }
+            
             checkUserStatus();
             // Fetch and display chat history
             fetch('/get_history')
@@ -1684,6 +1701,17 @@ document.getElementById('registerSubmitBtn').addEventListener('click', function(
     .then(data => {
         if (data.status === 'success') {
             bootstrap.Modal.getInstance(document.getElementById('registerModal')).hide();
+            
+            // Clear any existing guest session data before checking user status
+            if (!window.isLoggedInUser) {
+                fetch('/clear_guest_session', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                }).catch(error => {
+                    console.log('Could not clear guest session:', error);
+                });
+            }
+            
             checkUserStatus();
             alert('Registration successful!');
         } else {
@@ -3192,6 +3220,7 @@ if (docsTabBtn) docsTabBtn.addEventListener('click', stopBackendLogsInterval);
 
 // Clear backend logs when page is unloaded (session ends)
 window.addEventListener('beforeunload', function() {
+    // Clear backend logs
     fetch('/clear_backend_logs', {
         method: 'POST',
         headers: {
@@ -3201,6 +3230,20 @@ window.addEventListener('beforeunload', function() {
         // Ignore errors when page is unloading
         console.log('Could not clear logs:', error);
     });
+    
+    // Clear guest session data when page is unloaded
+    // This ensures guest users don't persist data between visits
+    if (!window.isLoggedInUser) {  // Check if this is a guest user
+        fetch('/clear_guest_session_on_exit', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        }).catch(error => {
+            // Ignore errors when page is unloading
+            console.log('Could not clear guest session:', error);
+        });
+    }
 });
 
 // Clear displayed logs button functionality
@@ -3244,6 +3287,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const menu = document.getElementById('chatTopicsDropdownMenu');
     console.log('Menu found on load:', menu);
     setTimeout(updateUploadQuestionnaireButton, 200); // Delay to ensure DOM is ready
+    
+    // Check user status on page load to set guest user flag
+    checkUserStatus();
 });
 // ... existing code ...
 
@@ -3262,14 +3308,25 @@ function updateUploadQuestionnaireButton() {
     console.log('updateUploadQuestionnaireButton called, checked topics:', checked.length);
     console.log('Checked elements:', checked);
     
-    // No topics selected
-    if (checked.length === 0 || (checked.length === 1 && checked[0].value === 'none')) {
+    // Debug: Log each checked checkbox value
+    Array.from(checked).forEach((cb, index) => {
+        console.log(`Checked checkbox ${index}: value="${cb.value}", id="${cb.id}"`);
+    });
+    
+    // No topics selected - improved logic
+    const hasValidTopics = Array.from(checked).some(cb => cb.value !== 'none');
+    console.log('Has valid topics:', hasValidTopics);
+    
+    if (!hasValidTopics) {
+        console.log('No valid topics selected, disabling button');
         batchQnAButton.disabled = true;
         batchQnAButton.classList.add('disabled-btn');
         batchQnAButton.setAttribute('title', 'Select topics with documents to enable Upload Questionnaire');
         batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Topics)';
         return;
     }
+    
+    console.log('Valid topics found, proceeding with document check');
     
     // Get selected topic IDs
     const selectedTopicIds = Array.from(checked)
@@ -3476,23 +3533,75 @@ function monitorQuestionnaireProgress(jobId) {
 }
 
 function showQuestionnaireResults(jobId) {
-    // This function will be called when processing is complete
-    // For now, just show a success message
-    addLogMessage(`🎉 All questions processed! Check the logs for detailed results.`);
-    
-    // Hide the panel and reset
-    const batchQnAPanel = document.getElementById('batchQnAPanel');
-    if (batchQnAPanel) batchQnAPanel.classList.add('hidden');
-    
-    // Clear the file input
-    const batchQnAInput = document.getElementById('batchQnAInput');
-    if (batchQnAInput) batchQnAInput.value = '';
-    
-    const batchQnAFileName = document.getElementById('batchQnAFileName');
-    if (batchQnAFileName) batchQnAFileName.textContent = '';
-    
-    const batchQnAUploadBtn = document.getElementById('batchQnAUploadBtn');
-    if (batchQnAUploadBtn) batchQnAUploadBtn.disabled = true;
+    console.log(`Fetching results for job: ${jobId}`);
+    // Fetch the final results and show download link
+    fetch(`/questionnaire_results/${jobId}`)
+    .then(response => {
+        console.log(`Response status: ${response.status}`);
+        return response.json();
+    })
+    .then(data => {
+        console.log('Received data:', data);
+        if (data.error) {
+            addLogMessage(`❌ Error getting results: ${data.error}`);
+            return;
+        }
+        
+        // Show success message with download link
+        addLogMessage(`🎉 All questions processed successfully!`);
+        addLogMessage(`📊 Processed ${data.questions ? data.questions.length : 0} questions`);
+        
+        // Create and show download link
+        if (data.csv_id) {
+            const downloadLink = document.createElement('div');
+            downloadLink.className = 'download-section';
+            downloadLink.style.cssText = `
+                margin: 15px 0;
+                padding: 15px;
+                background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+                border-radius: 10px;
+                text-align: center;
+                color: white;
+            `;
+            
+            downloadLink.innerHTML = `
+                <h5 style="margin: 0 0 10px 0; color: white;">📥 Download Results</h5>
+                <p style="margin: 0 0 15px 0; font-size: 0.9em;">Your questionnaire results are ready!</p>
+                <a href="/download_csv/${data.csv_id}" 
+                   class="btn btn-light btn-lg" 
+                   download="${data.filename || 'questionnaire_results.csv'}"
+                   style="text-decoration: none; font-weight: 600;">
+                    <i class="fas fa-download"></i> Download CSV
+                </a>
+                <p style="margin: 10px 0 0 0; font-size: 0.8em; opacity: 0.9;">
+                    File will be automatically cleaned up after download
+                </p>
+            `;
+            
+            // Add the download section to the chat area
+            const chatArea = document.querySelector('.chat-area');
+            if (chatArea) {
+                chatArea.appendChild(downloadLink);
+            }
+        }
+        
+        // Hide the panel and reset
+        const batchQnAPanel = document.getElementById('batchQnAPanel');
+        if (batchQnAPanel) batchQnAPanel.classList.add('hidden');
+        
+        // Clear the file input
+        const batchQnAInput = document.getElementById('batchQnAInput');
+        if (batchQnAInput) batchQnAInput.value = '';
+        
+        const batchQnAFileName = document.getElementById('batchQnAFileName');
+        if (batchQnAFileName) batchQnAFileName.textContent = '';
+        
+        const batchQnAUploadBtn = document.getElementById('batchQnAUploadBtn');
+        if (batchQnAUploadBtn) batchQnAUploadBtn.disabled = true;
+    })
+    .catch(error => {
+        addLogMessage(`❌ Error fetching results: ${error}`);
+    });
 }
     </script>
 </body>
