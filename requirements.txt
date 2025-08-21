@@ -4,11 +4,13 @@ werkzeug>=3.0.0  # WSGI utilities and security functions
 
 # === Core ML & AI Stack ===
 numpy<2.0.0  # NumPy 1.x for compatibility with ML libraries
+torch>=2.0.0  # PyTorch deep learning framework (required for sentence-transformers)
 langchain==0.3.27  # AI application framework
 langchain-community==0.3.27  # Community integrations for LangChain
 langchain-ollama==0.3.6  # Ollama LLM integration
 langchain-core>=0.3.72  # Core LangChain components (compatible with langchain 0.3.27)
 faiss-cpu==1.11.0.post1  # Vector similarity search (CPU)
+sentence-transformers==2.5.1  # High-quality sentence embeddings for semantic search
 
 # === Document Processing ===
 PyMuPDF==1.26.3  # Fast PDF processing library
@@ -23,15 +25,38 @@ psycopg2-binary==2.9.10  # PostgreSQL database adapter
 # === System Utilities ===
 psutil==6.1.0  # System and process monitoring
 requests>=2.31.0  # HTTP library for API calls
+pickle5==0.0.12  # Enhanced pickle for Python 3.8+ (fallback compatibility)
 
 # === Optional: Table Extraction (Heavy - install only if needed) ===
-# pandas==1.5.3  # Data manipulation and analysis
-# tabula-py==2.9.0  # PDF table extraction
-# camelot-py[cv]==0.11.0  # Advanced PDF table extraction
-# opencv-python==4.8.1.78  # Computer vision library
-# pytesseract==0.3.10  # OCR text recognition
-# Pillow==10.1.0  # Image processing library
-# openpyxl==3.1.2  # Excel file processing
+pandas==1.5.3  # Data manipulation and analysis
+tabula-py==2.9.0  # PDF table extraction
+camelot-py[cv]==0.11.0  # Advanced PDF table extraction
+opencv-python==4.8.1.78  # Computer vision library
+pytesseract==0.3.10  # OCR text recognition
+Pillow==10.1.0  # Image processing library
+openpyxl==3.1.2  # Excel file processing
+
+# === Additional Utilities ===
+# Note: These are typically included with Python standard library
+# but listed here for completeness and potential version requirements
+# xml.etree.ElementTree - XML processing (built-in)
+# csv - CSV file handling (built-in)
+# hashlib - Cryptographic hash functions (built-in)
+# secrets - Cryptographically strong random numbers (built-in)
+# re - Regular expressions (built-in)
+# json - JSON encoding/decoding (built-in)
+# datetime - Date and time handling (built-in)
+# threading - Thread-based parallelism (built-in)
+# time - Time-related functions (built-in)
+# concurrent.futures - Asynchronous execution (built-in)
+# uuid - UUID generation (built-in)
+# io - Core tools for working with streams (built-in)
+# pathlib - Object-oriented filesystem paths (built-in)
+# inspect - Introspection utilities (built-in)
+# subprocess - Subprocess management (built-in)
+# platform - Access to underlying platform's identifying data (built-in)
+# shutil - High-level file operations (built-in)
+# random - Random number generation (built-in)
 
 # =============================================================================
 # LIBRARY DETAILED DESCRIPTIONS
@@ -132,6 +157,57 @@ requests>=2.31.0  # HTTP library for API calls
 # for processing. It provides the TextLoader, PyMuPDFLoader, 
 # UnstructuredWordDocumentLoader, and CSVLoader classes that handle various 
 # document formats uploaded by users.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PYTORCH (torch>=2.0.0)                                                   │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# PyTorch is a machine learning framework that provides the computational 
+# foundation for deep learning models. It offers a flexible and dynamic 
+# approach to building neural networks, with strong support for GPU acceleration 
+# and automatic differentiation. PyTorch is the underlying engine that powers 
+# many high-level ML libraries including sentence-transformers.
+#
+# HOW IT IS USED:
+# PyTorch provides tensors (multi-dimensional arrays), automatic differentiation 
+# for gradient computation, and GPU acceleration for faster computation. It 
+# includes pre-built layers, optimizers, and loss functions for building 
+# neural networks. The framework is designed for both research and production 
+# use with a Python-first approach.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, PyTorch is the computational backend for sentence-transformers, 
+# providing the neural network infrastructure for generating high-quality text 
+# embeddings. It handles the mathematical operations, GPU acceleration, and 
+# model inference that enables semantic similarity search and enhanced context 
+# filtering. PyTorch is essential for the AI pipeline's performance and accuracy.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ SENTENCE-TRANSFORMERS (sentence-transformers==2.5.1)                     │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Sentence Transformers is a Python framework for state-of-the-art sentence, 
+# text and image embeddings. It provides pre-trained models that can convert 
+# text into high-quality vector representations (embeddings) that capture 
+# semantic meaning. These embeddings are essential for semantic search, 
+# document similarity, and AI-powered text understanding.
+#
+# HOW IT IS USED:
+# Sentence Transformers provides pre-trained models that can encode text 
+# into dense vector representations. These models are trained on large 
+# amounts of text data and can understand semantic relationships between 
+# words and phrases. The library includes models like all-MiniLM-L6-v2 
+# which provides a good balance between quality and speed for production use.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, sentence-transformers provides the embedding model 
+# (all-MiniLM-L6-v2) that converts user questions and document chunks 
+# into vector representations. These embeddings enable semantic similarity 
+# search, allowing the system to find the most relevant document chunks 
+# for answering questions, even when the exact words don't match. This 
+# is crucial for the enhanced context filtering and search capabilities.
 #
 # ───────────────────────────────────────────────────────────────────────────────
 #
@@ -383,6 +459,30 @@ requests>=2.31.0  # HTTP library for API calls
 # binding for the Flask application. It's also used for any external 
 # API calls or web service integrations that might be needed for enhanced 
 # functionality like external data sources or monitoring services.
+#
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ PICKLE5 (pickle5==0.0.12)                                                │
+# └─────────────────────────────────────────────────────────────────────────────┘
+# Pickle5 is an enhanced version of Python's built-in pickle module that 
+# provides better compatibility and performance for serializing Python 
+# objects. Serialization is the process of converting Python objects into 
+# a format that can be stored or transmitted and later reconstructed.
+#
+# HOW IT IS USED:
+# Pickle5 provides enhanced serialization capabilities with better 
+# error handling and compatibility across Python versions. It's designed 
+# as a drop-in replacement for the built-in pickle module and provides 
+# additional features for handling complex object serialization scenarios.
+#
+# WHAT IT IS USED FOR IN THIS PROGRAM:
+# In the FAQ Bot, pickle5 is used for serializing and deserializing 
+# complex Python objects like the vector database index, AI model states, 
+# and cached data. This ensures that the system can save and restore its 
+# state between sessions, maintain document embeddings, and cache 
+# frequently accessed information for better performance.
+#
 #
 # ───────────────────────────────────────────────────────────────────────────────
 #
