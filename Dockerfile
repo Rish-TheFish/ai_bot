@@ -131,32 +131,46 @@ RUN echo '#!/bin/bash' > /app/startup.sh && \
     echo '' >> /app/startup.sh && \
     echo 'echo "Checking for postgres user..."' >> /app/startup.sh && \
     echo 'id postgres || echo "Creating postgres user..." && useradd -r -s /bin/bash -d /var/lib/postgresql postgres || echo "User already exists"' >> /app/startup.sh && \
+    echo 'echo "Setting postgres user home and permissions..."' >> /app/startup.sh && \
+    echo 'sudo mkdir -p /var/lib/postgresql' >> /app/startup.sh && \
+    echo 'sudo chown postgres:postgres /var/lib/postgresql' >> /app/startup.sh && \
+    echo 'sudo chmod 755 /var/lib/postgresql' >> /app/startup.sh && \
+    echo 'sudo usermod -d /var/lib/postgresql postgres' >> /app/startup.sh && \
+    echo 'sudo usermod -s /bin/bash postgres' >> /app/startup.sh && \
     echo '' >> /app/startup.sh && \
     echo '# Initialize PostgreSQL database if not already done' >> /app/startup.sh && \
     echo 'if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then' >> /app/startup.sh && \
     echo '    echo "Initializing PostgreSQL database..."' >> /app/startup.sh && \
-    echo '    sudo -u postgres initdb -D /var/lib/postgresql/data --auth=trust' >> /app/startup.sh && \
-    echo '    echo "Database initialized successfully"' >> /app/startup.sh && \
-    echo '    echo "Fixing permissions..."' >> /app/startup.sh && \
+    echo '    echo "Cleaning data directory..."' >> /app/startup.sh && \
+    echo '    sudo rm -rf /var/lib/postgresql/data/*' >> /app/startup.sh && \
+    echo '    echo "Setting permissions before initdb..."' >> /app/startup.sh && \
     echo '    sudo chown -R postgres:postgres /var/lib/postgresql/data' >> /app/startup.sh && \
     echo '    sudo chown -R postgres:postgres /var/run/postgresql' >> /app/startup.sh && \
+    echo '    sudo chmod 700 /var/lib/postgresql/data' >> /app/startup.sh && \
+    echo '    sudo chmod 755 /var/run/postgresql' >> /app/startup.sh && \
+    echo '    echo "Testing write permissions..."' >> /app/startup.sh && \
+    echo '    sudo -u postgres touch /var/lib/postgresql/data/test_write || echo "Write permission test failed"' >> /app/startup.sh && \
+    echo '    sudo rm -f /var/lib/postgresql/data/test_write' >> /app/startup.sh && \
+    echo '    echo "Running initdb..."' >> /app/startup.sh && \
+    echo '    sudo -u postgres initdb -D /var/lib/postgresql/data --auth=trust' >> /app/startup.sh && \
+    echo '    echo "Database initialized successfully"' >> /app/startup.sh && \
     echo 'fi' >> /app/startup.sh && \
     echo '' >> /app/startup.sh && \
     echo '# Start PostgreSQL' >> /app/startup.sh && \
     echo 'echo "Starting PostgreSQL..."' >> /app/startup.sh && \
-    echo 'echo "Postgres user PATH: $(sudo -u postgres bash -c "source /var/lib/postgresql/.profile && echo \$PATH")"' >> /app/startup.sh && \
+    echo 'echo "Postgres user PATH: $(sudo -u postgres echo $PATH)"' >> /app/startup.sh && \
     echo 'echo "Postgres user home: $(sudo -u postgres echo $HOME)"' >> /app/startup.sh && \
-    echo 'echo "Postgres binary location: $(sudo -u postgres bash -c "source /var/lib/postgresql/.profile && which postgres")"' >> /app/startup.sh && \
+    echo 'echo "Postgres binary location: $(sudo -u postgres which postgres)"' >> /app/startup.sh && \
     echo 'echo "System postgres binary: $(which postgres)"' >> /app/startup.sh && \
     echo 'echo "System pg_ctl binary: $(which pg_ctl)"' >> /app/startup.sh && \
-    echo 'sudo -u postgres bash -c "source /var/lib/postgresql/.profile && pg_ctl -D /var/lib/postgresql/data start > /dev/null 2>&1"' >> /app/startup.sh && \
+    echo 'sudo -u postgres pg_ctl -D /var/lib/postgresql/data start > /dev/null 2>&1' >> /app/startup.sh && \
     echo 'sleep 5' >> /app/startup.sh && \
     echo 'echo "PostgreSQL status:"' >> /app/startup.sh && \
-    echo 'if sudo -u postgres bash -c "source /var/lib/postgresql/.profile && pg_ctl -D /var/lib/postgresql/data status"; then' >> /app/startup.sh && \
+    echo 'if sudo -u postgres pg_ctl -D /var/lib/postgresql/data status; then' >> /app/startup.sh && \
     echo '    echo "PostgreSQL started successfully with pg_ctl"' >> /app/startup.sh && \
     echo 'else' >> /app/startup.sh && \
     echo '    echo "pg_ctl failed, trying direct postgres start..."' >> /app/startup.sh && \
-    echo '    sudo -u postgres bash -c "source /var/lib/postgresql/.profile && postgres -D /var/lib/postgresql/data > /var/log/postgresql.log 2>&1 &"' >> /app/startup.sh && \
+    echo '    sudo -u postgres postgres -D /var/lib/postgresql/data > /var/log/postgresql.log 2>&1 &' >> /app/startup.sh && \
     echo '    sleep 10' >> /app/startup.sh && \
     echo '    echo "Trying system PATH fallback..."' >> /app/startup.sh && \
     echo '    sudo -u postgres postgres -D /var/lib/postgresql/data > /var/log/postgresql.log 2>&1 &' >> /app/startup.sh && \
@@ -170,23 +184,20 @@ RUN echo '#!/bin/bash' > /app/startup.sh && \
     echo 'echo "Setting postgres user permissions..."' >> /app/startup.sh && \
     echo 'sudo chown -R postgres:postgres /var/lib/postgresql' >> /app/startup.sh && \
     echo 'sudo chown -R postgres:postgres /var/run/postgresql' >> /app/startup.sh && \
-    echo 'echo "Setting postgres user PATH..."' >> /app/startup.sh && \
-    echo 'echo "Available postgres versions:"' >> /app/startup.sh && \
+    echo 'echo "PostgreSQL binaries available:"' >> /app/startup.sh && \
     echo 'ls -la /usr/lib/postgresql/ || echo "No postgres versions found"' >> /app/startup.sh && \
-    echo 'echo "Setting PATH for postgres user..."' >> /app/startup.sh && \
-    echo 'sudo -u postgres echo "export PATH=/usr/lib/postgresql/*/bin:\$PATH" >> /var/lib/postgresql/.bashrc' >> /app/startup.sh && \
-    echo 'sudo -u postgres echo "export PATH=/usr/lib/postgresql/*/bin:\$PATH" >> /var/lib/postgresql/.profile' >> /app/startup.sh && \
+    echo 'echo "System PATH contains: $(echo $PATH)"' >> /app/startup.sh && \
     echo '' >> /app/startup.sh && \
     echo '# Create database and user if they do not exist' >> /app/startup.sh && \
     echo 'echo "Setting up database..."' >> /app/startup.sh && \
     echo 'echo "Creating postgres user..."' >> /app/startup.sh && \
-    echo 'sudo -u postgres bash -c "source /var/lib/postgresql/.profile && createuser --superuser --createdb --createrole postgres 2>/dev/null || echo \"User postgres already exists\""' >> /app/startup.sh && \
+    echo 'sudo -u postgres createuser --superuser --createdb --createrole postgres 2>/dev/null || echo "User postgres already exists"' >> /app/startup.sh && \
     echo 'echo "Creating database..."' >> /app/startup.sh && \
-    echo 'sudo -u postgres bash -c "source /var/lib/postgresql/.profile && createdb chat_history 2>/dev/null || echo \"Database already exists\""' >> /app/startup.sh && \
+    echo 'sudo -u postgres createdb chat_history 2>/dev/null || echo "Database already exists"' >> /app/startup.sh && \
     echo 'echo "Setting password..."' >> /app/startup.sh && \
-    echo 'sudo -u postgres bash -c "source /var/lib/postgresql/.profile && psql -c \"ALTER USER postgres PASSWORD '\''321Calvin123'\'';\" 2>/dev/null || echo \"Password already set\""' >> /app/startup.sh && \
+    echo 'sudo -u postgres psql -c "ALTER USER postgres PASSWORD '\''321Calvin123'\'';" 2>/dev/null || echo "Password already set"' >> /app/startup.sh && \
     echo 'echo "Testing database connection..."' >> /app/startup.sh && \
-    echo 'sudo -u postgres bash -c "source /var/lib/postgresql/.profile && psql -d chat_history -c \"SELECT version();\"" || echo "Database connection failed"' >> /app/startup.sh && \
+    echo 'sudo -u postgres psql -d chat_history -c "SELECT version();" || echo "Database connection failed"' >> /app/startup.sh && \
     echo '' >> /app/startup.sh && \
     echo '# Start Ollama in background' >> /app/startup.sh && \
     echo 'echo "Starting Ollama..."' >> /app/startup.sh && \

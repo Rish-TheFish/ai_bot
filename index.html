@@ -1403,7 +1403,7 @@ window.addEventListener('DOMContentLoaded', function() {
             }
             
             // Update selected topics to reflect All Topics selection
-            selectedTopics = new Set(['all']);
+            window.selectedTopics = new Set(['all']);
             currentChatSessionKey = 'topics:all';
             
             // Update button label and chat input state
@@ -1461,8 +1461,8 @@ window.addEventListener('DOMContentLoaded', function() {
             }
         }
         
-                    // Welcome message - All Topics is now the default
-            addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai', false);
+        // Welcome message - All Topics is now the default
+        addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai', false);
         
         // Check if we have history for this session
         const history = chatHistories[sessionKey] || [];
@@ -1474,6 +1474,39 @@ window.addEventListener('DOMContentLoaded', function() {
             fetchChatHistory(sessionKey);
             return; // Don't display anything yet, wait for fetch to complete
         }
+        
+        // Display the history
+        displayChatHistoryDirectly(sessionKey);
+    }
+
+    function displayChatHistoryDirectly(sessionKey) {
+        console.log(`[DEBUG] Displaying chat history directly for session: ${sessionKey}`);
+        
+        const chatMessages = document.getElementById('chatMessages');
+        chatMessages.innerHTML = '';
+        
+        // Show the initial AI welcome message with topic name(s)
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        let topicLabel = 'All Topics';
+        let isAllTopics = true;
+        if (menu) {
+            const checked = menu.querySelectorAll('.form-check-input:checked');
+            if (checked.length === 0 || checked[0].value === 'all') {
+                topicLabel = 'All Topics';
+                isAllTopics = true;
+            } else {
+                const names = Array.from(checked).map(c => menu.querySelector(`label[for="chatTopic_${c.value}"]`).textContent);
+                topicLabel = names.join(', ');
+                isAllTopics = false;
+            }
+        }
+        
+        // Welcome message - All Topics is now the default
+        addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai', false);
+        
+        // Check if we have history for this session
+        const history = chatHistories[sessionKey] || [];
+        console.log(`[DEBUG] History length: ${history.length}`);
         
         // Display the history
         history.forEach(item => {
@@ -1514,9 +1547,13 @@ window.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Debouncing to prevent excessive API calls
+    let fetchHistoryTimeout = null;
+    
     function fetchChatHistory(sessionKey) {
         console.log(`[DEBUG] Fetching chat history for session: ${sessionKey}`);
         
+        // SIMPLIFIED: Direct API call without debouncing to debug the issue
         fetch(`/get_history?session_key=${encodeURIComponent(sessionKey)}`)
             .then(res => {
                 console.log(`[DEBUG] Fetch response status: ${res.status}`);
@@ -1528,13 +1565,13 @@ window.addEventListener('DOMContentLoaded', function() {
                 console.log(`[DEBUG] Updated chatHistories[${sessionKey}]:`, chatHistories[sessionKey]);
                 
                 // Now display the history
-                displayChatHistory(sessionKey);
+                displayChatHistoryDirectly(sessionKey);
             })
             .catch(error => {
                 console.error(`[ERROR] Failed to fetch chat history for session ${sessionKey}:`, error);
                 // Set empty history to prevent infinite loops
                 chatHistories[sessionKey] = [];
-                displayChatHistory(sessionKey);
+                displayChatHistoryDirectly(sessionKey);
             });
     }
 
@@ -1915,7 +1952,7 @@ function setupEventListeners() {
                     alert('Error: ' + data.error);
                 } else {
                     // Start questionnaire mode to collect IDK responses
-                    startQuestionnaireMode();
+                    // startQuestionnaireMode();
                     
                     // Start progress monitoring
                     const jobId = data.job_id || 'unknown';
@@ -2062,10 +2099,21 @@ function askQuestion() {
     thinkingMessage.innerHTML = '<span style="font-size:2em">🤖</span> <em>Thinking...</em>';
     document.getElementById('chatMessages').appendChild(thinkingMessage);
     document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    
+    // Get the current topic selection and session key
+    const topicIds = Array.from(window.selectedTopics || []);
+    const sessionKey = currentChatSessionKey || 'topics:all';
+    
+    console.log('[DEBUG] Sending question with:', { question, topic_ids: topicIds, session_key: sessionKey });
+    
     fetch('/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: question })
+        body: JSON.stringify({ 
+            question: question,
+            topic_ids: topicIds,
+            session_key: sessionKey
+        })
     })
     .then(response => response.json())
     .then(data => {
@@ -2254,418 +2302,423 @@ function handleFileSelect() {
 window.idkQuestions = [];
 window.isQuestionnaireMode = false;
 
-// IDK Detection and Highlighting Functions
-function detectIDKPatterns(text) {
-    // Enhanced patterns to catch more IDK-like responses
-    const idkPatterns = [
-        // Direct "I don't know" statements
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:know|kno)\s+(?:the\s+)?(?:answer|information|details|about\s+this)\b/gi,
+// IDK Detection and Highlighting Functions - DISABLED FOR TESTING
+// function detectIDKPatterns(text) {
+//     return { hasIDK: false, highlightedText: text };
+// }
+        // // Direct "I don't know" statements
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:know|kno)\s+(?:the\s+)?(?:answer|information|details|about\s+this)\b/gi,
         
-        // "I couldn't find that information"
-        /\b(?:i\s+)?(?:couldn'?t|could\s+not)\s+(?:find|locate)\s+(?:that\s+)?(?:information|answer|data)\b/gi,
+        // // "I couldn't find that information"
+        // /\b(?:i\s+)?(?:couldn'?t|could\s+not)\s+(?:find|locate)\s+(?:that\s+)?(?:information|answer|data)\b/gi,
         
-        // "I don't have information about this"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:information|data|details)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        // // "I don't have information about this"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:information|data|details)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
         
-        // "I'm not able to answer this question"
-        /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:able|capable)\s+to\s+(?:answer|provide)\s+(?:this\s+)?(?:question|request)\b/gi,
+        // // "I'm not able to answer this question"
+        // /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:able|capable)\s+to\s+(?:answer|provide)\s+(?:this\s+)?(?:question|request)\b/gi,
         
-        // "I cannot answer this question"
-        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:answer|provide|give)\s+(?:this\s+)?(?:question|query|request)\b/gi,
+        // // "I cannot answer this question"
+        // /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:answer|provide|give)\s+(?:this\s+)?(?:question|query|request)\b/gi,
         
-        // "No information found for this"
-        /\b(?:no\s+)?(?:information|data|details)\s+(?:found|available)\s+(?:for|about|regarding)\s+(?:this|that|it)\b/gi,
+        // // "No information found for this"
+        // /\b(?:no\s+)?(?:information|data|details)\s+(?:found|available)\s+(?:for|about|regarding)\s+(?:this|that|it)\b/gi,
         
-        // "I'm not sure about this"
-        /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:sure|certain)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        // // "I'm not sure about this"
+        // /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:sure|certain)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
         
-        // "I cannot determine this"
-        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+determine\s+(?:this|that|it)\b/gi,
+        // // "I cannot determine this"
+        // /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+determine\s+(?:this|that|it)\b/gi,
         
-        // "This is not covered in the documents"
-        /\b(?:this\s+)?(?:is\s+)?(?:not\s+)?(?:covered|addressed|mentioned)\s+(?:in|by|within)\s+(?:the\s+)?(?:documents|materials|sources)\b/gi,
+        // // "This is not covered in the documents"
+        // /\b(?:this\s+)?(?:is\s+)?(?:not\s+)?(?:covered|addressed|mentioned)\s+(?:in|by|within)\s+(?:the\s+)?(?:documents|materials|sources)\b/gi,
         
-        // "I have no knowledge about this"
-        /\b(?:i\s+)?(?:have\s+)?(?:no\s+)?(?:knowledge|information)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        // // "I have no knowledge about this"
+        // /\b(?:i\s+)?(?:have\s+)?(?:no\s+)?(?:knowledge|information)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
         
-        // NEW: "I don't have specific information"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:specific|detailed|particular)\s+(?:information|data|details)\b/gi,
+        // // NEW: "I don't have specific information"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:specific|detailed|particular)\s+(?:information|data|details)\b/gi,
         
-        // NEW: "I apologize, but I cannot provide"
-        /\b(?:i\s+)?(?:apologize|apologise|sorry)\s*,?\s*(?:but\s+)?(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:provide|give|offer)\b/gi,
+        // // NEW: "I apologize, but I cannot provide"
+        // /\b(?:i\s+)?(?:apologize|apologise|sorry)\s*,?\s*(?:but\s+)?(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:provide|give|offer)\b/gi,
         
-        // NEW: "I'm unable to provide"
-        /\b(?:i\s+)?(?:am\s+)?(?:unable|not\s+able)\s+to\s+(?:provide|give|offer|answer)\b/gi,
+        // // NEW: "I'm unable to provide"
+        // /\b(?:i\s+)?(?:am\s+)?(?:unable|not\s+able)\s+to\s+(?:provide|give|offer|answer)\b/gi,
         
-        // NEW: "This information is not available"
-        /\b(?:this\s+)?(?:information|data|details)\s+(?:is\s+)?(?:not\s+)?(?:available|accessible|obtainable)\b/gi,
+        // // NEW: "This information is not available"
+        // /\b(?:i\s+)?(?:this\s+)?(?:information|data|details)\s+(?:is\s+)?(?:not\s+)?(?:available|accessible|obtainable)\b/gi,
         
-        // NEW: "I cannot find specific details"
-        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:find|locate|identify)\s+(?:specific|detailed|particular)\s+(?:details|information|data)\b/gi,
+        // // NEW: "I cannot find specific details"
+        // /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:find|locate|identify)\s+(?:specific|detailed|particular)\s+(?:details|information|data)\b/gi,
         
-        // NEW: "This falls outside my knowledge"
-        /\b(?:this\s+)?(?:falls|lies)\s+(?:outside|beyond)\s+(?:my\s+)?(?:knowledge|expertise|scope)\b/gi,
+        // // NEW: "This falls outside my knowledge"
+        // /\b(?:this\s+)?(?:falls|lies)\s+(?:outside|beyond)\s+(?:my\s+)?(?:knowledge|expertise|scope)\b/gi,
         
-        // NEW: "I don't have access to this information"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:access\s+to|access\s+to\s+the)\s+(?:this\s+)?(?:information|data|details)\b/gi,
+        // // NEW: "I don't have access to this information"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:access\s+to|access\s+to\s+the)\s+(?:this\s+)?(?:information|data|details)\b/gi,
         
-        // ADDITIONAL: General "I don't have" patterns
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:information|data|details|knowledge|context)\b/gi,
+        // // ADDITIONAL: General "I don't have" patterns
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:information|data|details|knowledge|context)\b/gi,
         
-        // ADDITIONAL: "I don't have anything about"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:anything|something|any\s+details)\s+(?:about|regarding|concerning)\b/gi,
+        // // ADDITIONAL: "I don't have anything about"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:anything|something|any\s+details)\s+(?:about|regarding|concerning)\b/gi,
         
-        // ADDITIONAL: "I don't have the information"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:information|data|details|knowledge)\b/gi,
+        // // ADDITIONAL: "I don't have the information"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:information|data|details|knowledge)\b/gi,
         
-        // ADDITIONAL: "I don't have enough information"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:information|data|details|knowledge)\b/gi,
+        // // ADDITIONAL: "I don't have enough information"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:information|data|details|knowledge)\b/gi,
         
-        // ADDITIONAL: "I don't have that information"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:that|this|the)\s+(?:information|data|details|knowledge)\b/gi,
+        // // ADDITIONAL: "I don't have that information"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:that|this|the)\s+(?:information|data|details|knowledge)\b/gi,
         
-        // ADDITIONAL: "I don't have any details"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:details|specifics|particulars)\b/gi,
+        // // ADDITIONAL: "I don't have any details"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:details|specifics|particulars)\b/gi,
         
-        // ADDITIONAL: "I don't have the answer"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:answer|solution|response)\b/gi,
+        // // ADDITIONAL: "I don't have the answer"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:answer|solution|response)\b/gi,
         
-        // ADDITIONAL: "I don't have a response"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:a\s+)?(?:response|answer|solution)\b/gi,
+        // // ADDITIONAL: "I don't have a response"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:a\s+)?(?:response|answer|solution)\b/gi,
         
-        // ADDITIONAL: "I don't have the context"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:context|background|framework)\b/gi,
+        // // ADDITIONAL: "I don't have the context"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:context|background|framework)\b/gi,
         
-        // ADDITIONAL: "I don't have the background"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:background|context|history)\b/gi,
+        // // ADDITIONAL: "I don't have the background"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:background|context|history)\b/gi,
         
-        // ADDITIONAL: "I don't have the details"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:details|particulars|specifics)\b/gi,
+        // // ADDITIONAL: "I don't have the details"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:details|particulars|specifics)\b/gi,
         
-        // ADDITIONAL: "I don't have the specifics"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:specifics|details|particulars)\b/gi,
+        // // ADDITIONAL: "I don't have the specifics"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:specifics|details|particulars)\b/gi,
         
-        // ADDITIONAL: "I don't have the particulars"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:particulars|details|specifics)\b/gi,
+        // // ADDITIONAL: "I don't have the particulars"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:particulars|details|specifics)\b/gi,
         
-        // ADDITIONAL: "I don't have the knowledge"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:knowledge|understanding|expertise)\b/gi,
+        // // ADDITIONAL: "I don't have the knowledge"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:knowledge|understanding|expertise)\b/gi,
         
-        // ADDITIONAL: "I don't have the understanding"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:understanding|knowledge|comprehension)\b/gi,
+        // // ADDITIONAL: "I don't have the understanding"
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:understanding|knowledge|comprehension)\b/gi,
         
         // ADDITIONAL: "I don't have the expertise"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:expertise|knowledge|skills)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:expertise|knowledge|skills)\b/gi,
         
         // ADDITIONAL: "I don't have the skills"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:skills|abilities|capabilities)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:skills|abilities|capabilities)\b/gi,
         
         // ADDITIONAL: "I don't have the capabilities"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:capabilities|abilities|skills)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:capabilities|abilities|skills)\b/gi,
         
         // ADDITIONAL: "I don't have the abilities"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:abilities|skills|capabilities)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:abilities|skills|capabilities)\b/gi,
         
         // ADDITIONAL: "I don't have the resources"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:resources|materials|tools)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:resources|materials|tools)\b/gi,
         
         // ADDITIONAL: "I don't have the materials"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:materials|resources|tools)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:materials|resources|tools)\b/gi,
         
         // ADDITIONAL: "I don't have the tools"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:tools|resources|materials)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:tools|resources|materials)\b/gi,
         
         // ADDITIONAL: "I don't have the data"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:data|information|facts)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:data|information|facts)\b/gi,
         
         // ADDITIONAL: "I don't have the facts"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:facts|data|information)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:facts|data|information)\b/gi,
         
         // ADDITIONAL: "I don't have the evidence"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:evidence|proof|support)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:evidence|proof|support)\b/gi,
         
         // ADDITIONAL: "I don't have the proof"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:proof|evidence|support)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:proof|evidence|support)\b/gi,
         
         // ADDITIONAL: "I don't have the support"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:support|evidence|proof)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:support|evidence|proof)\b/gi,
         
         // ADDITIONAL: "I don't have the documentation"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:documentation|records|files)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:documentation|records|files)\b/gi,
         
         // ADDITIONAL: "I don't have the records"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:records|documentation|files)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:records|documentation|files)\b/gi,
         
         // ADDITIONAL: "I don't have the files"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:files|documentation|records)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:files|documentation|records)\b/gi,
         
         // ADDITIONAL: "I don't have the sources"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sources|references|citations)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sources|references|citations)\b/gi,
         
         // ADDITIONAL: "I don't have the references"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:references|sources|citations)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:references|sources|citations)\b/gi,
         
         // ADDITIONAL: "I don't have the citations"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:citations|references|sources)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:citations|references|sources)\b/gi,
         
         // ADDITIONAL: "I don't have enough context"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:context|background|framework)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:context|background|framework)\b/gi,
         
         // ADDITIONAL: "I don't have the framework"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:framework|structure|outline)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:framework|structure|outline)\b/gi,
         
         // ADDITIONAL: "I don't have the structure"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:structure|framework|outline)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:structure|framework|outline)\b/gi,
         
         // ADDITIONAL: "I don't have the outline"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:outline|structure|framework)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:outline|structure|framework)\b/gi,
         
         // ADDITIONAL: "I don't have the history"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:history|background|timeline)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:history|background|timeline)\b/gi,
         
         // ADDITIONAL: "I don't have the timeline"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:timeline|history|chronology)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:timeline|history|chronology)\b/gi,
         
         // ADDITIONAL: "I don't have the chronology"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:chronology|timeline|sequence)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:chronology|timeline|sequence)\b/gi,
         
         // ADDITIONAL: "I don't have the sequence"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sequence|order|progression)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sequence|order|progression)\b/gi,
         
         // ADDITIONAL: "I don't have the order"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:order|sequence|progression)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:order|sequence|progression)\b/gi,
         
         // ADDITIONAL: "I don't have the progression"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:progression|sequence|order)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:progression|sequence|order)\b/gi,
         
         // ADDITIONAL: "I don't have the basis"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:basis|foundation|grounds)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:basis|foundation|grounds)\b/gi,
         
         // ADDITIONAL: "I don't have the foundation"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:foundation|basis|grounds)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:foundation|basis|grounds)\b/gi,
         
         // ADDITIONAL: "I don't have the grounds"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:grounds|basis|foundation)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:grounds|basis|foundation)\b/gi,
         
         // ADDITIONAL: "I don't have the reason"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:reason|justification|explanation)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:reason|justification|explanation)\b/gi,
         
         // ADDITIONAL: "I don't have the justification"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:justification|reason|explanation)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:justification|reason|explanation)\b/gi,
         
         // ADDITIONAL: "I don't have the explanation"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:explanation|reason|justification)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:explanation|reason|justification)\b/gi,
         
         // ADDITIONAL: "I don't have the insight"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:insight|understanding|perspective)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:insight|understanding|perspective)\b/gi,
         
         // ADDITIONAL: "I don't have the perspective"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:perspective|insight|viewpoint)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:perspective|insight|viewpoint)\b/gi,
         
         // ADDITIONAL: "I don't have the viewpoint"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:viewpoint|perspective|insight)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:viewpoint|perspective|insight)\b/gi,
         
         // ADDITIONAL: "I don't have the experience"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:experience|practice|exposure)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:experience|practice|exposure)\b/gi,
         
         // ADDITIONAL: "I don't have the practice"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:practice|experience|exposure)\b/gi,
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:practice|experience|exposure)\b/gi,
         
         // ADDITIONAL: "I don't have the exposure"
-        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:exposure|experience|practice)\b/gi
-    ];
+        // /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:exposure|experience|practice)\b/gi
+    // ];
     
-    let hasIDK = false;
-    let highlightedText = text;
+    // let hasIDK = false;
+    // let highlightedText = text;
     
-    // Check each pattern with more strict matching
-    idkPatterns.forEach(pattern => {
-        if (pattern.test(text)) {
-            hasIDK = true;
-            // Highlight the matched text
-            highlightedText = highlightedText.replace(pattern, (match) => {
-                return `<span class="idk-highlight">${match}</span>`;
-            });
-        }
-    });
+    // // Check each pattern with more strict matching
+    // idkPatterns.forEach(pattern => {
+    //     if (pattern.test(text)) {
+    //         hasIDK = true;
+    //         // Highlight the matched text
+    //         highlightedText = highlightedText.replace(pattern, (match) => {
+    //         return `<span class="idk-highlight">${match}</span>`;
+    //         });
+    //     }
+    // });
     
-    return { hasIDK, highlightedText };
-}
+    // return { hasIDK, highlightedText };
+//     return { hasIDK: false, highlightedText: text };
+// }
 
-function showIDKAlert(question = '') {
-    // Create overlay
-    const overlay = document.createElement('div');
-    overlay.className = 'idk-overlay';
-    document.body.appendChild(overlay);
+// function showIDKAlert(question = '') {
+//     // Create overlay
+//     const overlay = document.createElement('div');
+//     overlay.className = 'idk-overlay';
+//     document.body.appendChild(overlay);
     
-    // Create alert modal
-    const modal = document.createElement('div');
-    modal.className = 'idk-alert-modal';
+    // // Create alert modal
+    // const modal = document.createElement('div');
+    // modal.className = 'idk-alert-modal';
     
-    // Check if we have multiple IDK questions (questionnaire mode)
-    const hasMultipleQuestions = window.idkQuestions.length > 1;
-    const questionCount = window.idkQuestions.length;
+    // // Check if we have multiple IDK questions (questionnaire mode)
+    // const hasMultipleQuestions = window.idkQuestions.length > 1;
+    // const questionCount = window.idkQuestions.length;
     
-    let modalContent = '';
+    // let modalContent = '';
     
-    if (hasMultipleQuestions) {
-        // Multiple questions mode - show count and list option
-        modalContent = `
-            <h3>Human Attention Needed</h3>
-            <p><strong>AI Answered IDK to ${questionCount} Questions</strong><br><br>
-            The AI has indicated it doesn't know the answer to ${questionCount} questions during questionnaire processing. 
-            This may require human review or additional context.</p>
-            <div class="idk-alert-buttons">
-                <button onclick="showIDKDetailsList()" class="btn-details">View All Questions (${questionCount})</button>
-                <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
-            </div>
-        `;
-    } else {
-        // Single question mode - show individual question
-        modalContent = `
-            <h3>Human Attention Needed</h3>
-            <p><strong>AI Answered IDK</strong><br><br>
-            The AI has indicated it doesn't know the answer to this question. 
-            This may require human review or additional context.</p>
-            <div class="idk-alert-buttons">
-                <button onclick="showIDKDetails('${question.replace(/'/g, "\\'")}')" class="btn-details">Details</button>
-                <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
-            </div>
-        `;
-    }
+    // if (hasMultipleQuestions) {
+    //     // Multiple questions mode - show count and list option
+    //     modalContent = `
+    //         <h3>Human Attention Needed</h3>
+    //         <p><strong>AI Answered IDK to ${questionCount} Questions</strong><br><br>
+    //         The AI has indicated it doesn't know the answer to ${questionCount} questions during questionnaire processing. 
+    //         This may require human review or additional context.</p>
+    //         <div class="idk-alert-buttons">
+    //             <button onclick="showIDKDetailsList()" class="btn-details">View All Questions (${questionCount})</button>
+    //             <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
+    //         </div>
+    //     `;
+    // } else {
+    //     // Single question mode - show individual question
+    //     modalContent = `
+    //         <h3>Human Attention Needed</h3>
+    //         <p><strong>AI Answered IDK</strong><br><br>
+    //         The AI has indicated it doesn't know the answer to this question. 
+    //         This may require human review or additional context.</p>
+    //         <div class="idk-alert-buttons">
+    //             <button onclick="showIDKDetails('${question.replace(/'/g, "\\'")}')" class="btn-details">Details</button>
+    //             <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
+    //         </div>
+    //     `;
+    // }
     
-    modal.innerHTML = modalContent;
-    document.body.appendChild(modal);
+    // modal.innerHTML = modalContent;
+    // document.body.appendChild(modal);
     
-    // Alert will only close when user clicks Acknowledge
-}
+    // // Alert will only close when user clicks Acknowledge
+// }
 
-function closeIDKAlert() {
-    const overlay = document.querySelector('.idk-overlay');
-    const modal = document.querySelector('.idk-alert-modal');
+// function closeIDKAlert() {
+//     const overlay = document.querySelector('.idk-overlay');
+//     const modal = document.querySelector('.idk-alert-modal');
     
-    if (overlay) overlay.remove();
-    if (modal) modal.remove();
-}
+//     if (overlay) overlay.remove();
+//     if (modal) modal.remove();
+// }
 
-function showIDKDetails(question) {
-    // Create details modal for single question
-    const detailsModal = document.createElement('div');
-    detailsModal.className = 'idk-details-modal';
-    detailsModal.innerHTML = `
-        <div class="idk-details-content">
-            <h4>📝 Question Details</h4>
-            <p><strong>Question:</strong></p>
-            <div class="question-text">${question}</div>
-            <button onclick="closeIDKDetails()" class="btn-close">Close</button>
-        </div>
-    `;
-    document.body.appendChild(detailsModal);
-}
+// function showIDKDetails(question) {
+//     // Create details modal for single question
+//     const detailsModal = document.createElement('div');
+//     detailsModal.className = 'idk-details-modal';
+//     detailsModal.innerHTML = `
+//         <div class="idk-details-content">
+//             <h4>📝 Question Details</h4>
+//             <p><strong>Question:</strong></p>
+//             <div class="question-text">${question}</div>
+//             <button onclick="closeIDKDetails()" class="btn-close">Close</button>
+//         </div>
+//     `;
+//     document.body.appendChild(detailsModal);
+// }
 
-function showIDKDetailsList() {
-    // Create details modal for multiple questions
-    const detailsModal = document.createElement('div');
-    detailsModal.className = 'idk-details-modal';
+// function showIDKDetailsList() {
+//     // Create details modal for multiple questions
+//     const detailsModal = document.createElement('div');
+//     detailsModal.className = 'idk-details-modal';
     
-    let questionsList = '';
-    window.idkQuestions.forEach((item, index) => {
-        questionsList += `
-            <div class="question-item">
-                <div class="question-header">
-                    <span class="question-number">${index + 1}</span>
-                    <span class="question-time">${item.timestamp}</span>
-                </div>
-                <div class="question-text">${item.question}</div>
-                <div class="ai-response">${item.response}</div>
-            </div>
-        `;
-    });
+//     let questionsList = '';
+//     window.idkQuestions.forEach((item, index) => {
+//         questionsList += `
+//             <div class="question-item">
+//                 <div class="question-header">
+//                     <span class="question-number">${index + 1}</span>
+//                     <span class="question-time">${item.timestamp}</span>
+//                 </div>
+//                 <div class="question-text">${item.question}</div>
+//                 <div class="ai-response">${item.response}</div>
+//             </div>
+//         `;
+//     });
     
-    detailsModal.innerHTML = `
-        <div class="idk-details-content">
-            <h4>📝 IDK Questions Summary (${window.idkQuestions.length})</h4>
-            <div class="questions-list">
-                ${questionsList}
-            </div>
-            <div class="modal-actions">
-                <button onclick="clearIDKQuestions()" class="btn-clear">Clear List</button>
-                <button onclick="closeIDKDetails()" class="btn-close">Close</button>
-            </div>
-        </div>
-    `;
-    document.body.appendChild(detailsModal);
-}
+//     detailsModal.innerHTML = `
+//         <div class="idk-details-content">
+//             <h4>📝 IDK Questions Summary (${window.idkQuestions.length})</h4>
+//             <div class="questions-list">
+//                 ${questionsList}
+//             </div>
+//             <div class="modal-actions">
+//                 <button onclick="clearIDKQuestions()" class="btn-clear">Clear List</button>
+//                 <button onclick="closeIDKDetails()" class="btn-close">Close</button>
+//             </div>
+//         </div>
+//     `;
+//     document.body.appendChild(detailsModal);
+// }
 
-function closeIDKDetails() {
-    const detailsModal = document.querySelector('.idk-details-modal');
-    if (detailsModal) detailsModal.remove();
-}
+// function closeIDKDetails() {
+//     const detailsModal = document.querySelector('.idk-details-modal');
+//     if (detailsModal) detailsModal.remove();
+// }
 
-function clearIDKQuestions() {
-    window.idkQuestions = [];
-    closeIDKDetails();
-    addLogMessage('✅ IDK questions list cleared');
-}
-
-
-
+// function clearIDKQuestions() {
+//     window.idkQuestions = [];
+//     closeIDKDetails();
+//     addLogMessage('✅ IDK questions list cleared');
+// }
 
 
-function startQuestionnaireMode() {
-    window.isQuestionnaireMode = true;
-    window.idkQuestions = []; // Clear previous questions
-    addLogMessage('📋 Questionnaire mode started - IDK alerts will be collected and shown at the end');
-}
 
-function endQuestionnaireMode() {
-    window.isQuestionnaireMode = false;
+
+
+// IDK Management Functions - DISABLED FOR TESTING
+// function startQuestionnaireMode() {
+//     window.isQuestionnaireMode = true;
+//     window.idkQuestions = []; // Clear previous questions
+//     addLogMessage('📋 Questionnaire mode started - IDK alerts will be collected and shown at the end');
+// }
+
+// function endQuestionnaireMode() {
+//     window.isQuestionnaireMode = false;
     
-    // Show final IDK alert if there are any questions
-    if (window.idkQuestions.length > 0) {
-        setTimeout(() => {
-            showIDKAlert(); // This will show the multiple questions alert
-        }, 1000);
-        addLogMessage(`🚨 Questionnaire completed with ${window.idkQuestions.length} IDK responses`);
-    } else {
-        addLogMessage('✅ Questionnaire completed successfully - no IDK responses');
-    }
-}
+//     // Show final IDK alert if there are any questions
+//     if (window.idkQuestions.length > 0) {
+//         setTimeout(() => {
+//             showIDKAlert(); // This will show the multiple questions alert
+//         }, 1000);
+//         addLogMessage(`🚨 Questionnaire completed with ${window.idkQuestions.length} IDK responses`);
+//     } else {
+//         addLogMessage('✅ Questionnaire completed successfully - no IDK responses');
+//     }
+// }
 
 function addMessage(text, type, isNewMessage = false) {
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${type}-message`;
     
-    // Only check for IDK patterns on NEW AI messages, not on history display
-    if (type === 'ai' && isNewMessage) {
-        const { hasIDK, highlightedText } = detectIDKPatterns(text);
-        messageDiv.innerHTML = highlightedText;
+    // IDK Detection - DISABLED FOR TESTING
+    // if (type === 'ai' && isNewMessage) {
+    //     const { hasIDK, highlightedText } = detectIDKPatterns(text);
+    //     messageDiv.innerHTML = highlightedText;
         
-        // Collect IDK questions instead of showing alerts immediately
-        if (hasIDK) {
-            const question = window.currentQuestion || 'Question not available';
+    //     // Collect IDK questions instead of showing alerts immediately
+    //     if (hasIDK) {
+    //         const question = window.currentQuestion || 'Question not available';
             
-            // Add to IDK questions list if not already there
-            if (!window.idkQuestions.some(q => q.question === question)) {
-                window.idkQuestions.push({
-                    question: question,
-                    timestamp: new Date().toLocaleTimeString(),
-                    response: text
-                });
-            }
+    //         // Add to IDK questions list if not already there
+    //         if (!window.idkQuestions.some(q => q.question === question)) {
+    //             window.idkQuestions.push({
+    //                 question: question,
+    //                 timestamp: new Date().toLocaleTimeString(),
+    //                 response: text
+    //             });
+    //         }
             
-            // Only show alert immediately if NOT in questionnaire mode
-            if (!window.isQuestionnaireMode) {
-                setTimeout(() => {
-                    showIDKAlert(question);
-                }, 300);
-            }
-        }
-    } else {
-        // For history display or non-AI messages, just show the text without IDK detection
-        messageDiv.innerHTML = text;
-    }
+    //         // Only show alert immediately if NOT in questionnaire mode
+    //         if (!window.isQuestionnaireMode) {
+    //             setTimeout(() => {
+    //                 showIDKAlert(question);
+    //             }, 300);
+    //         }
+    //     }
+    // } else {
+    //     // For history display or non-AI messages, just show the text without IDK detection
+    //     messageDiv.innerHTML = text;
+    // }
+    
+    // Simplified message display without IDK detection
+    messageDiv.innerHTML = text;
     
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -2931,19 +2984,19 @@ function getSelectedDocuments() {
 function loadDocuments() {
     const cacheBuster = Date.now();
     // Get selected topics from Docs Management dropdown
-    let selectedTopics = [];
+    let localSelectedTopics = [];
     const topicDropdownMenu = document.getElementById('topicDropdownMenu');
     if (topicDropdownMenu) {
-        selectedTopics = Array.from(topicDropdownMenu.querySelectorAll('.topic-checkbox:checked')).map(cb => cb.value);
+        localSelectedTopics = Array.from(topicDropdownMenu.querySelectorAll('.topic-checkbox:checked')).map(cb => cb.value);
     }
     let topic = 'all';
     let selected_topics_param = '';
-    if (selectedTopics.length === 1 && selectedTopics[0] !== 'all') {
-        topic = selectedTopics[0];
-    } else if (selectedTopics.length > 1) {
+    if (localSelectedTopics.length === 1 && localSelectedTopics[0] !== 'all') {
+        topic = localSelectedTopics[0];
+    } else if (localSelectedTopics.length > 1) {
         topic = 'multiple';
         // Always send sorted array of integers
-        const sortedInts = selectedTopics.filter(v => v !== 'all').map(v => parseInt(v, 10)).sort((a, b) => a - b);
+        const sortedInts = localSelectedTopics.filter(v => v !== 'all').map(v => parseInt(v, 10)).sort((a, b) => a - b);
         selected_topics_param = `&selected_topics=${JSON.stringify(sortedInts)}`;
     }
     let url = `/get_documents?cb=${cacheBuster}&topic=${topic}${selected_topics_param}`;
@@ -3518,7 +3571,7 @@ function continueReplaceWithNewName(newFilename) {
 // --- Topic Management Functions ---
 
 let currentTopic = 'all';
-let selectedTopics = [];
+window.selectedTopics = window.selectedTopics || [];
 let topics = [];
 
 function loadTopics(callback) {
@@ -3582,24 +3635,24 @@ function updateTopicDropdown() {
 function updateSelectedTopics() {
     console.log('updateSelectedTopics called');
     const checkboxes = document.querySelectorAll('.topic-checkbox:checked');
-    selectedTopics = Array.from(checkboxes).map(cb => cb.value);
+    window.selectedTopics = Array.from(checkboxes).map(cb => cb.value);
     
-    console.log('Selected topics:', selectedTopics);
+    console.log('Selected topics:', window.selectedTopics);
     
     // Update dropdown button text
-    if (selectedTopics.length === 0) {
+    if (window.selectedTopics.length === 0) {
         document.getElementById('currentTopicName').textContent = 'All Topics';
         currentTopic = 'all';
-    } else if (selectedTopics.length === 1) {
-        const topic = topics.find(t => t.id == selectedTopics[0]);
+    } else if (window.selectedTopics.length === 1) {
+        const topic = topics.find(t => t.id == window.selectedTopics[0]);
         document.getElementById('currentTopicName').textContent = topic ? topic.name : 'Unknown Topic';
-        currentTopic = selectedTopics[0];
+        currentTopic = window.selectedTopics[0];
     } else {
-        document.getElementById('currentTopicName').textContent = `${selectedTopics.length} Topics Selected`;
+        document.getElementById('currentTopicName').textContent = `${window.selectedTopics.length} Topics Selected`;
         currentTopic = 'multiple';
     }
     
-         addLogMessage(`📂 Selected topics: ${selectedTopics.length > 0 ? selectedTopics.map(id => topics.find(t => t.id == id)?.name).join(', ') : 'All Topics'}`);
+         addLogMessage(`📂 Selected topics: ${window.selectedTopics.length > 0 ? window.selectedTopics.map(id => topics.find(t => t.id == id)?.name).join(', ') : 'All Topics'}`);
      
      // Update delete button state
      updateDeleteTopicsButton();
@@ -3611,7 +3664,7 @@ function updateSelectedTopics() {
 
 function switchTopic(topicId) {
     currentTopic = topicId;
-    selectedTopics = topicId === 'all' ? [] : [topicId];
+    window.selectedTopics = topicId === 'all' ? [] : [topicId];
     
     // Update the document management topic dropdown checkboxes
     updateDocumentManagementTopicSelection();
@@ -3634,11 +3687,11 @@ function switchTopic(topicId) {
 // Update loadDocuments to filter by topic
 function loadDocuments() {
     const cacheBuster = Date.now();
-    console.log('Loading documents for topic:', currentTopic, 'selectedTopics:', selectedTopics);
+    console.log('Loading documents for topic:', currentTopic, 'selectedTopics:', window.selectedTopics);
     
     let url = `/get_documents?cb=${cacheBuster}&topic=${currentTopic}`;
-    if (currentTopic === 'multiple' && selectedTopics.length > 0) {
-        url += `&selected_topics=${JSON.stringify(selectedTopics)}`;
+    if (currentTopic === 'multiple' && window.selectedTopics.length > 0) {
+        url += `&selected_topics=${JSON.stringify(window.selectedTopics)}`;
     }
     
     console.log('Fetching URL:', url);
@@ -5236,8 +5289,8 @@ function monitorQuestionnaireProgress(jobId) {
                 addLogMessage(`✅ Questionnaire processing complete!`);
                 addLogMessage(`📊 Processed ${data.completed_questions} questions successfully`);
                 
-                // End questionnaire mode and show IDK alert if needed
-                endQuestionnaireMode();
+                // End questionnaire mode - IDK alerts disabled for testing
+                // endQuestionnaireMode();
                 
                 // Show download link
                 showQuestionnaireResults(jobId);

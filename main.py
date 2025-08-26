@@ -872,6 +872,10 @@ def ask_question():
         topic_ids = []
     # Otherwise, topic_ids is a list of selected topic IDs
     
+    # COMPLETE ISOLATION - reset context for each individual question
+    if ai_app:
+        ai_app._reset_context_state()
+    
     try:
         result = ai_app.handle_question(question, chat_history=chat_history, topic_ids=topic_ids)
         if 'error' in result:
@@ -950,6 +954,10 @@ def upload_questions():
     if not filename:
         return jsonify({'error': 'No file selected'})
     
+    # COMPLETE ISOLATION - clear any previous questionnaire progress to prevent contamination
+    global questionnaire_progress
+    questionnaire_progress.clear()  # Clear all previous progress
+    
     # Generate job ID for progress tracking
     job_id = str(uuid.uuid4())
     questionnaire_progress[job_id] = {
@@ -961,6 +969,16 @@ def upload_questions():
     }
     
     add_backend_log(f"Starting questionnaire processing for: {filename} (Job ID: {job_id})")
+    
+    # COMPLETE ISOLATION - reset AI app state before processing new questionnaire
+    if ai_app:
+        upload_session_id = str(uuid.uuid4())
+        ai_app.set_upload_session(upload_session_id, job_id)
+        add_backend_log(f"AI app state reset for new questionnaire session: {upload_session_id}")
+        
+        # Optionally create a completely fresh instance for maximum isolation
+        # Uncomment the next line if you want a new instance for each questionnaire
+        # ai_app = get_or_init_ai_app()  # This would create a completely new instance
     
     # Extract questions based on file type
     questions = extract_questions_from_file(file)
@@ -1019,13 +1037,31 @@ def extract_questions_from_file(file):
             
             file.stream.seek(0)
             try:
-                pdf = PdfReader(io.BytesIO(file.stream.read()))
-                full_text = ""
-                for page in pdf.pages:
-                    text = page.extract_text()
-                    if text:
-                        full_text += text + "\n"
-                questions = extract_questions_from_text(full_text)
+                # Try PyMuPDF first (most reliable)
+                try:
+                    import fitz
+                    pdf_bytes = file.stream.read()
+                    pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    full_text = ""
+                    for page in pdf:
+                        text = page.get_text()
+                        if text:
+                            full_text += text + "\n"
+                    pdf.close()
+                    questions = extract_questions_from_text(full_text)
+                except ImportError:
+                    # Fallback to PdfReader if available
+                    if PdfReader:
+                        pdf = PdfReader(io.BytesIO(file.stream.read()))
+                        full_text = ""
+                        for page in pdf.pages:
+                            text = page.extract_text()
+                            if text:
+                                full_text += text + "\n"
+                        questions = extract_questions_from_text(full_text)
+                    else:
+                        add_backend_log("No PDF reader available")
+                        return []
             except Exception as pdf_error:
                 add_backend_log(f"Error processing PDF: {pdf_error}")
                 return []
@@ -1057,7 +1093,9 @@ def extract_questions_from_file(file):
         if cleaned_q and len(cleaned_q) > 10:
             cleaned_questions.append(cleaned_q)
     
-    add_backend_log(f"Extracted {len(cleaned_questions)} valid questions")
+    add_backend_log(f"Extracted {len(cleaned_questions)} valid questions from {len(questions)} raw questions")
+    if len(cleaned_questions) == 0 and len(questions) > 0:
+        add_backend_log("Warning: All questions were filtered out during cleaning. Check question length and content.")
     return cleaned_questions
 
 def extract_questions_from_text(text):
@@ -1097,16 +1135,56 @@ def extract_questions_from_text(text):
             questions = best_questions
             add_backend_log(f"Found {len(questions)} questions using pattern: {best_pattern}")
         else:
-            # Fallback: split on question marks
-            question_mark_parts = re.split(r'\?', text)
-            for part in question_mark_parts[:-1]:
-                question = part.strip()
-                if question and len(question) > 10:
-                    sentences = re.split(r'[.!?]', question)
-                    if sentences:
-                        last_sentence = sentences[-1].strip()
-                        if last_sentence and len(last_sentence) > 10:
-                            questions.append(last_sentence + "?")
+            # More flexible fallback: split on multiple delimiters
+            add_backend_log("No structured patterns found, using flexible text splitting...")
+            
+            # Split on common question delimiters
+            delimiters = [r'\n\s*\n', r'\n\s*•', r'\n\s*-\s*', r'\n\s*\*\s*', r'\n\s*→', r'\n\s*→']
+            
+            for delimiter in delimiters:
+                parts = re.split(delimiter, text)
+                if len(parts) > 1:
+                    potential_questions = []
+                    for part in parts:
+                        question = part.strip()
+                        if question and len(question) > 10:
+                            # Check if it looks like a question
+                            if any(word in question.lower() for word in ['what', 'how', 'why', 'when', 'where', 'who', 'which', 'can', 'could', 'would', 'should', 'do', 'does', 'is', 'are', 'was', 'were']):
+                                potential_questions.append(question)
+                    
+                    if len(potential_questions) > len(questions):
+                        questions = potential_questions
+                        add_backend_log(f"Found {len(questions)} questions using delimiter: {delimiter}")
+            
+            # If still no questions, try splitting on question marks
+            if not questions:
+                question_mark_parts = re.split(r'\?', text)
+                for part in question_mark_parts[:-1]:
+                    question = part.strip()
+                    if question and len(question) > 10:
+                        sentences = re.split(r'[.!?]', question)
+                        if sentences:
+                            last_sentence = sentences[-1].strip()
+                            if last_sentence and len(last_sentence) > 10:
+                                questions.append(last_sentence + "?")
+                
+                if questions:
+                    add_backend_log(f"Found {len(questions)} questions using question mark splitting")
+            
+            # Final fallback: split on double newlines and look for question-like content
+            if not questions:
+                paragraphs = re.split(r'\n\s*\n', text)
+                for para in paragraphs:
+                    para = para.strip()
+                    if para and len(para) > 15:  # Longer paragraphs are more likely to be questions
+                        # Check if it contains question words or ends with question mark
+                        if (any(word in para.lower() for word in ['what', 'how', 'why', 'when', 'where', 'who', 'which']) or 
+                            para.endswith('?') or 
+                            para.endswith('.')):
+                            questions.append(para)
+                
+                if questions:
+                    add_backend_log(f"Found {len(questions)} questions using paragraph splitting")
     
     return questions
 
@@ -1143,11 +1221,11 @@ def process_questions_parallel(questions, job_id):
         }
         
         # Collect results as they complete (with timeout)
-        # Single questions take ~23 seconds, so allow 2 minutes per question for safety
-        for future in as_completed(future_to_question, timeout=600):  # 10 minute total timeout
+        # 72 questions take ~70 seconds each, so allow 90 minutes total for safety
+        for future in as_completed(future_to_question, timeout=5400):  # 90 minute total timeout
             question, index = future_to_question[future]
             try:
-                result = future.result(timeout=120)  # 2 minutes per question timeout
+                result = future.result(timeout=180)  # 3 minutes per question timeout (allows for complex questions)
                 results.append(result)
                 add_backend_log(f"Completed question {index+1}/{len(questions)}: {question[:50]}...")
             except TimeoutError:
@@ -1193,6 +1271,10 @@ def process_single_question(question, index, job_id):
                 #'confidence': 0,
                 'sources': {'summary': 'AI not ready', 'detailed': 'AI Assistant not initialized'}
             }
+        
+        # COMPLETE ISOLATION - reset context for each individual question
+        if ai_app:
+            ai_app._reset_context_state()
         
         # Process the question using the EXACT same method as single questions
         # This ensures questionnaire questions get the same quality and speed as individual questions
@@ -1419,11 +1501,39 @@ def download_csv(file_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Simple rate limiting for get_history endpoint
+history_request_times = {}
+
 @app.route('/get_history', methods=['GET'])
 def get_history():
+    global history_request_times
     session_key = request.args.get('session_key')
+    
+    # Add debug logging
+    add_backend_log(f"DEBUG: get_history called for session_key: {session_key}")
+    
+    # TEMPORARILY DISABLED: Rate limiting to get chat working again
+    # TODO: Re-enable after frontend is properly fixed
+    # current_time = time.time()
+    # if session_key in history_request_times:
+    #     time_since_last = current_time - history_request_times[session_key]
+    #     if time_since_last < 0.5:  # 0.5 second cooldown
+    #         add_backend_log(f"Rate limit hit for get_history: {session_key} (last request: {time_since_last:.2f}s ago)")
+    #         return jsonify({'error': 'Rate limit exceeded. Please wait before requesting again.'}), 429
+    
+    # Update last request time
+    history_request_times[session_key] = time.time()
+    
+    # Clean up old entries (older than 1 hour)
+    cleanup_time = time.time() - 3600
+    history_request_times = {k: v for k, v in history_request_times.items() if v > cleanup_time}
+    
+    # Get chat history
     history = get_chat_history(session_key=session_key)
+    add_backend_log(f"DEBUG: get_history returning {len(history)} items for session {session_key}")
+    
     return jsonify({'history': history})
+
 
 @app.route('/get_documents', methods=['GET'])
 def get_documents():

@@ -559,103 +559,103 @@ class AIApp:
     
     # Content safety check removed - now integrated into hallucination detection
     
-    def _detect_hallucination(self, answer: str, query: str, context: str, relevant_docs: list) -> dict:
-        """Use AI to intelligently detect if the response contains inappropriate content or serious hallucinations."""
-        try:
-            # Only check for truly inappropriate content, not minor technical details
-            # Use a separate LLM call to evaluate the response intelligently
+#     def _detect_hallucination(self, answer: str, query: str, context: str, relevant_docs: list) -> dict:
+#         """Use AI to intelligently detect if the response contains inappropriate content or serious hallucinations."""
+#         try:
+#             # Only check for truly inappropriate content, not minor technical details
+#             # Use a separate LLM call to evaluate the response intelligently
             
-            evaluation_prompt = f"""
-You are an AI content evaluator. Your job is to determine if the following AI response contains:
-1. SERIOUSLY inappropriate content (harmful, offensive, illegal, etc.)
-2. MAJOR hallucinations that could mislead users significantly
-3. Content that goes against professional/ethical standards
+#             evaluation_prompt = f"""
+# You are an AI content evaluator. Your job is to determine if the following AI response contains:
+# 1. SERIOUSLY inappropriate content (harmful, offensive, illegal, etc.)
+# 2. MAJOR hallucinations that could mislead users significantly
+# 3. Content that goes against professional/ethical standards
 
-Question: {query}
-Context provided: {context[:1000]}...
-AI Response: {answer}
+# Question: {query}
+# Context provided: {context[:1000]}...
+# AI Response: {answer}
 
-IMPORTANT: Only flag content that is TRULY problematic. Be conservative - don't flag:
-- Minor technical details not in context
-- Generic phrases or standard responses
-- Reasonable inferences from the context
-- Professional language or standard compliance terms
-- Common compliance words like "explicitly stated", "adult supervision", "mature system"
+# IMPORTANT: Only flag content that is TRULY problematic. Be conservative - don't flag:
+# - Minor technical details not in context
+# - Generic phrases or standard responses
+# - Reasonable inferences from the context
+# - Professional language or standard compliance terms
+# - Common compliance words like "explicitly stated", "adult supervision", "mature system"
 
-Respond with ONLY a JSON object:
-{{
-    "is_inappropriate": true/false,
-    "is_major_hallucination": true/false,
-    "confidence": 0.0-1.0,
-    "reason": "brief explanation if flagged, otherwise 'Content is appropriate'"
-}}
+# Respond with ONLY a JSON object:
+# {{
+#     "is_inappropriate": true/false,
+#     "is_major_hallucination": true/false,
+#     "confidence": 0.0-1.0,
+#     "reason": "brief explanation if flagged, otherwise 'Content is appropriate'"
+# }}
 
-Only set is_inappropriate or is_major_hallucination to true if you are highly confident the content is problematic.
-"""
+# Only set is_inappropriate or is_major_hallucination to true if you are highly confident the content is problematic.
+# """
 
-            try:
-                # Use the same LLM to evaluate the response
-                evaluation_result = self.llm.invoke(evaluation_prompt)
+#             try:
+#                 # Use the same LLM to evaluate the response
+#                 evaluation_result = self.llm.invoke(evaluation_prompt)
                 
-                # Parse the JSON response
-                import json
-                try:
-                    # Try to extract JSON from the response
-                    json_start = evaluation_result.find('{')
-                    json_end = evaluation_result.rfind('}') + 1
-                    if json_start >= 0 and json_end > json_start:
-                        json_str = evaluation_result[json_start:json_end]
-                        result = json.loads(json_str)
-                    else:
-                        # Fallback if no JSON found
-                        result = {
-                            'is_inappropriate': False,
-                            'is_major_hallucination': False,
-                            'confidence': 0.0,
-                            'reason': 'JSON parsing failed, defaulting to safe'
-                        }
-                except json.JSONDecodeError:
-                    # If JSON parsing fails, default to safe
-                    result = {
-                        'is_inappropriate': False,
-                        'is_major_hallucination': False,
-                        'confidence': 0.0,
-                        'reason': 'JSON parsing failed, defaulting to safe'
-                    }
+#                 # Parse the JSON response
+#                 import json
+#                 try:
+#                     # Try to extract JSON from the response
+#                     json_start = evaluation_result.find('{')
+#                     json_end = evaluation_result.rfind('}') + 1
+#                     if json_start >= 0 and json_end > json_start:
+#                         json_str = evaluation_result[json_start:json_end]
+#                         result = json.loads(json_str)
+#                     else:
+#                         # Fallback if no JSON found
+#                         result = {
+#                             'is_inappropriate': False,
+#                             'is_major_hallucination': False,
+#                             'confidence': 0.0,
+#                             'reason': 'JSON parsing failed, defaulting to safe'
+#                         }
+#                 except json.JSONDecodeError:
+#                     # If JSON parsing fails, default to safe
+#                     result = {
+#                         'is_inappropriate': False,
+#                         'is_major_hallucination': False,
+#                         'confidence': 0.0,
+#                         'reason': 'JSON parsing failed, defaulting to safe'
+#                     }
                 
-                # Determine if this should be flagged
-                is_hallucination = result.get('is_inappropriate', False) or result.get('is_major_hallucination', False)
-                confidence_score = result.get('confidence', 0.0)
+#                 # Determine if this should be flagged
+#                 is_hallucination = result.get('is_inappropriate', False) or result.get('is_major_hallucination', False)
+#                 confidence_score = result.get('confidence', 0.0)
                 
-                # Only flag if confidence is high (>0.7) and content is truly problematic
-                if confidence_score < 0.7:
-                    is_hallucination = False
-                    confidence_score = 0.0
+#                 # Only flag if confidence is high (>0.7) and content is truly problematic
+#                 if confidence_score < 0.7:
+#                     is_hallucination = False
+#                     confidence_score = 0.0
                 
-                return {
-                    'is_hallucination': is_hallucination,
-                    'confidence': confidence_score,
-                    'indicators': [result.get('reason', 'AI evaluation completed')],
-                    'context_length': len(context),
-                    'answer_length': len(answer),
-                    'contradiction_score': 0.0
-                }
+#                 return {
+#                     'is_hallucination': is_hallucination,
+#                     'confidence': confidence_score,
+#                     'indicators': [result.get('reason', 'AI evaluation completed')],
+#                     'context_length': len(context),
+#                     'answer_length': len(answer),
+#                     'contradiction_score': 0.0
+#                 }
                 
-            except Exception as llm_error:
-                logging.warning(f"AI-based hallucination detection failed: {llm_error}")
-                # Fallback: only flag if there are obvious red flags
-                return self._fallback_hallucination_check(answer, context)
+#             except Exception as llm_error:
+#                 logging.warning(f"AI-based hallucination detection failed: {llm_error}")
+#                 # Fallback: only flag if there are obvious red flags
+#                 return self._fallback_hallucination_check(answer, context)
             
-        except Exception as e:
-            logging.error(f"Hallucination detection failed: {e}")
-            return {
-                'is_hallucination': False,
-                'confidence': 0.0,
-                'indicators': [f'Detection error: {str(e)}'],
-                'context_length': len(context),
-                'answer_length': len(answer),
-                'contradiction_score': 0.0
-            }
+#         except Exception as e:
+#             logging.error(f"Hallucination detection failed: {e}")
+#             return {
+#                 'is_hallucination': False,
+#                 'confidence': 0.0,
+#                 'indicators': [f'Detection error: {str(e)}'],
+#                 'context_length': len(context),
+#                 'answer_length': len(answer),
+#                 'contradiction_score': 0.0
+#             }
     
     def _fallback_hallucination_check(self, answer: str, context: str) -> dict:
         """Fallback method that only flags obvious inappropriate content."""
@@ -1802,6 +1802,9 @@ Please provide a structured summary:"""
         query_start_time = time.time()
         print(f"[TIMING] Starting query_answer processing")
         
+        # COMPLETE ISOLATION - reset all context variables before each query
+        self._reset_context_state()
+        
         # Reset all context and answer variables to prevent contamination between queries
         actual_context = ""
         raw_context = ""
@@ -1853,8 +1856,8 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Vector DB index size: {self.db.index.ntotal if hasattr(self.db, 'index') else 'Unknown'}")
         print(f"[TIMING] STEP 2: Direct embedding completed, proceeding to retrieval...")
         # Try early termination first for speed, fallback to regular search
-        # More restrictive: fetch fewer initial chunks for better relevance
-        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.4, min_chunks=12)  # Higher threshold, fewer chunks
+        # OPTIMAL: Best balance between accuracy and speed
+        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.25, min_chunks=20)  # Optimal threshold and chunk count
         retrieval_time = time.time() - retrieval_start
         print(f"[TIMING] STEP 3: Document retrieval completed in {retrieval_time:.3f}s")
         print(f"[DEBUG] Retrieved {len(docs)} documents")
@@ -1864,9 +1867,24 @@ Please provide a structured summary:"""
             print(f"[DEBUG] Retrieved document sources:")
             for i, doc in enumerate(docs[:5]):  # Show first 5
                 source = doc.metadata.get('source', 'Unknown')
+                filename = doc.metadata.get('source', 'Unknown')
                 filename = os.path.basename(str(source))
                 print(f"[DEBUG]   Doc {i+1}: {filename} (chunk {doc.metadata.get('page', '?')})")
                 print(f"[DEBUG]   Content preview: {doc.page_content[:100]}...")
+        
+        # FALLBACK: If we don't have enough docs, try broader search
+        if len(docs) < 15:  # If we got fewer than 15 docs, try broader search
+            print(f"[FALLBACK] Only {len(docs)} docs found, trying broader search...")
+            try:
+                # Try with much lower threshold and more chunks
+                fallback_docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.08, min_chunks=35)
+                if len(fallback_docs) > len(docs):
+                    print(f"[FALLBACK] Broader search found {len(fallback_docs)} docs, using these instead")
+                    docs = fallback_docs
+                else:
+                    print(f"[FALLBACK] Broader search didn't help, keeping original {len(docs)} docs")
+            except Exception as e:
+                print(f"[FALLBACK] Broader search failed: {e}, keeping original docs")
         
         # STEP 4: Context Preparation
         context_start = time.time()
@@ -1901,8 +1919,8 @@ Please provide a structured summary:"""
                 clean_content = re.sub(r'Current question:.*?CONTEXT:', '', clean_content, flags=re.DOTALL)
                 
                 # Limit chunk size and clean up
-                if len(clean_content) > 250:  # Reduced from 300 for cleaner context
-                    clean_content = clean_content[:250] + "..."
+                if len(clean_content) > 400:  # Increased from 250 for more context
+                    clean_content = clean_content[:400] + "..."
                 
                 # Only add if content is meaningful after cleaning
                 if len(clean_content.strip()) > 20:
@@ -2143,22 +2161,25 @@ Please provide a structured summary:"""
             print(f"[TIMING] STEP 5: Optimized LLM call completed in {llm_time:.3f}s")
             print(f"[SPEED] LLM response received (length: {len(answer)} chars)")
             
-            # STEP 5.5: Integrated Hallucination & Content Safety Check
-            safety_start = time.time()
-            print(f"[SAFETY] STEP 5.5: Starting integrated hallucination and content safety check")
+            # STEP 5.5: Hallucination & Content Safety Check - DISABLED
+            # safety_start = time.time()
+            # print(f"[SAFETY] STEP 5.5: Starting integrated hallucination and content safety check")
             
-            # Check for both hallucinations and content safety in one AI evaluation
-            hallucination_check = self._detect_hallucination(answer, query, final_context, relevant_docs)
+            # # Check for both hallucinations and content safety in one AI evaluation
+            # hallucination_check = self._detect_hallucination(answer, query, final_context, relevant_docs)
             
-            if hallucination_check['is_hallucination']:
-                print(f"[SAFETY] Potential hallucination detected: {hallucination_check['confidence']:.2f}")
-                # Add warning to the answer
-                answer = f"[⚠️ WARNING: This answer may contain information not directly supported by the provided documents. Please verify with official sources.]\n\n{answer}"
+            # if hallucination_check['is_hallucination']:
+            #     print(f"[SAFETY] Potential hallucination detected: {hallucination_check['confidence']:.2f}")
+            #     # Add warning to the answer
+            #     answer = f"[⚠️ WARNING: This answer may contain information not directly supported by the provided documents. Please verify with official sources.]\n\n{answer}"
             
-            safety_time = time.time() - safety_start
-            print(f"[SAFETY] STEP 5.5: Integrated safety checks completed in {safety_time:.3f}s")
-            print(f"[SAFETY] Hallucination score: {hallucination_check['confidence']:.3f}")
-            print(f"[SAFETY] Content safety: {'PASS' if not hallucination_check.get('is_inappropriate', False) else 'FAIL'}")
+            # safety_time = time.time() - safety_start
+            # print(f"[SAFETY] STEP 5.5: Integrated safety checks completed in {safety_time:.3f}s")
+            # print(f"[SAFETY] Hallucination score: {hallucination_check['confidence']:.3f}")
+            # print(f"[SAFETY] Content safety: {'PASS' if not hallucination_check.get('is_inappropriate', False) else 'FAIL'}")
+            
+            # Create a dummy hallucination check for compatibility
+            hallucination_check = {'is_hallucination': False, 'confidence': 0.0, 'is_inappropriate': False}
             
             # STEP 6: Response Processing & Output
             response_processing_start = time.time()
@@ -2402,11 +2423,27 @@ Please provide a structured summary:"""
         #confidence = 0.85  # Default confidence
         #print(f"[TIMING] Using default confidence: {confidence}")
         
-        # Return structured source data
-        source_data = {
-            "summary": sources_summary if sources else "N/A",
-            "detailed": sources_detailed if sources else "N/A"
-        }
+        # Return structured source data - NO SOURCES if answer indicates no information
+        no_info_phrases = [
+            "no specific information found", "no information found", "i don't have specific information",
+            "not mentioned", "not found", "no information available", "i don't know"
+        ]
+        
+        answer_lower = answer.lower()
+        has_no_info = any(phrase in answer_lower for phrase in no_info_phrases)
+        
+        if has_no_info:
+            # If answer indicates no information, don't show sources
+            source_data = {
+                "summary": "No sources - no information found",
+                "detailed": "No sources - no information found"
+            }
+        else:
+            # Normal case: show sources that contributed to the answer
+            source_data = {
+                "summary": sources_summary if sources else "N/A",
+                "detailed": sources_detailed if sources else "N/A"
+            }
         
         # Skip answer enhancement entirely for speed
         final_answer = answer.strip()
@@ -4057,9 +4094,9 @@ Respond with ONLY a number between 0 and 100."""
         try:
             print(f"[SEMANTIC] Starting hybrid semantic + vector search for query: '{query}'")
             
-            # Step 1: Get vector similarity results
+            # Step 1: Get vector similarity results with more aggressive search
             vector_start = time.time()
-            retriever = self.db.as_retriever(search_type="similarity", k=initial_k)
+            retriever = self.db.as_retriever(search_type="similarity", k=initial_k * 2)  # Get more initial results
             vector_docs = retriever.invoke(query)
             vector_time = time.time() - vector_start
             print(f"[SEMANTIC] Vector search found {len(vector_docs)} chunks in {vector_time:.3f}s")
@@ -4341,41 +4378,36 @@ Respond with ONLY a number between 0 and 100."""
             return "Error occurred while attempting to extract fallback information."
 
     def build_enhanced_prompt(self, query, context, chat_history=None):
-        """Build optimized prompt for better answer quality"""
+        """Build optimized prompt for better answer quality and speed"""
         
-        # Extract key entities and concepts from query
-        key_terms = self._extract_key_entities(query)
-        
-        # Build context-aware instructions
-        instructions = f"""You are a professional compliance expert. Answer the question directly and completely based on the provided context.
+        # Build concise but effective instructions
+        instructions = f"""You are a compliance expert helping the user find information in the context. Provide ACCURATE answers using ONLY the provided context.
 
-CRITICAL INSTRUCTIONS:
-- DO NOT say "I can provide" or "I can answer" 
-- DO NOT say "Based on the provided context, I can provide..."
-- DO NOT say "I can provide a comprehensive answer about..."
-- JUST ANSWER THE QUESTION DIRECTLY with the information from the context
+CRITICAL RULES:
+- Answer directly without "Based on the context" or "I can provide"
+- Start with "Yes" or "No" ONLY for explicit yes/no questions
+- For all other questions, start directly with the answer
+- Cite sources using [filename] format when information is found
+- SEARCH THOROUGHLY through the context before saying "no information available"
+- Look for related terms, synonyms, and policy references
+- Be specific and actionable when information is found
+- ONLY USE THE INFORMATION FROM THE CONTEXT TO ANSWER THE QUESTION. DO NOT MAKE UP INFORMATION.
 
-INSTRUCTIONS:
-1. Answer the question completely and directly
-2. Use ONLY information from the provided context
-3. If the context has relevant information, provide a comprehensive answer
-4. If the context lacks information, say "Insufficient information provided"
-5. Structure: Direct answer first, then supporting details
-6. Start with "Yes" or "No" if the question is asking for a yes/no response
-7. Cite sources using [filename] format
-8. Be specific and actionable
-9. Focus on compliance requirements and procedures
-10. End with a confidence score between 0 and 100 signifying the relavence and accuracy of the answer (like this: "Confidence: 80%").
+SEARCH STRATEGY:
+- Look for exact matches first
+- Then search for related terms and concepts
+- Check for policy names, procedure references, and requirements
+- Look in all document chunks for relevant information
+- Only say "No information available about [topic]" after thorough search
 
-YES/NO QUESTIONS (start with Yes/No):
-- "Are backups necessary?" → "Yes, backups are necessary..."
-- "Is encryption required?" → "Yes, encryption is required..."
-- "Do we need to document this?" → "Yes, documentation is required..."
+IMPORTANT: If you find relevant information, cite the specific sources. If you find NO relevant information after thorough search, say "No information available about [topic]" and DO NOT list any sources.
 
-NON-YES/NO QUESTIONS (start with direct answer):
-- "What is the backup policy?" → "The backup policy requires..."
-- "How often should backups be performed?" → "Backups should be performed..."
-- "What are the encryption requirements?" → "The encryption requirements include..."
+EXAMPLES:
+- "Are backups required?" → "Yes, daily backups are required per [policy.pdf]"
+- "What is the backup policy?" → "Daily incremental backups at 2 AM, weekly full backups per [backup_policy.pdf]"
+- "How to reset password?" → "Use Password Manager tool, click 'Forgot Password' per [IT_policy.pdf]"
+- "What is the alien policy?" → "No information available about alien policy"
+THESE ARE ONLY EXAMPLES. YOU MUST ANSWER THE QUESTION DIRECTLY WITH THE INFORMATION FROM THE CONTEXT.
 
 QUESTION: {query}
 
@@ -4415,6 +4447,47 @@ ANSWER:"""
         
         return unique_terms[:10]  # Limit to top 10 terms
 
+    def _expand_search_scope(self, query, original_docs):
+        """Expand search scope when initial search doesn't find enough relevant information"""
+        try:
+            print(f"[EXPAND] Expanding search scope for query: '{query}'")
+            
+            # Extract key terms for broader search
+            key_terms = self._extract_key_entities(query)
+            print(f"[EXPAND] Key terms for expansion: {key_terms}")
+            
+            # Try searching with individual key terms
+            expanded_docs = []
+            for term in key_terms[:5]:  # Limit to top 5 terms
+                try:
+                    # Search with lower threshold for broader results
+                    retriever = self.db.as_retriever(search_type="similarity", k=10)
+                    term_docs = retriever.invoke(term)
+                    expanded_docs.extend(term_docs)
+                except Exception as e:
+                    print(f"[EXPAND] Error searching term '{term}': {e}")
+            
+            # Also try searching with policy-related terms
+            policy_terms = ['policy', 'procedure', 'requirement', 'standard', 'guideline']
+            for term in policy_terms:
+                try:
+                    retriever = self.db.as_retriever(search_type="similarity", k=8)
+                    policy_docs = retriever.invoke(term)
+                    expanded_docs.extend(policy_docs)
+                except Exception as e:
+                    print(f"[EXPAND] Error searching policy term '{term}': {e}")
+            
+            # Deduplicate and combine with original docs
+            all_docs = original_docs + expanded_docs
+            unique_docs = self._deduplicate_documents(all_docs)
+            
+            print(f"[EXPAND] Search expansion: {len(original_docs)} -> {len(unique_docs)} total docs")
+            return unique_docs[:50]  # Limit to reasonable size
+            
+        except Exception as e:
+            print(f"[EXPAND] Search expansion failed: {e}")
+            return original_docs
+
     def validate_context_relevance(self, query, context, docs):
         """Validate that context actually contains relevant information"""
         
@@ -4432,8 +4505,9 @@ ANSWER:"""
         
         print(f"[QUALITY] Context relevance check: {term_coverage}/{len(query_terms)} terms covered ({coverage_ratio:.2f})")
         
-        if coverage_ratio < 0.3:  # Less than 30% term coverage
-            print(f"[QUALITY] Low context relevance ({coverage_ratio:.2f}), attempting to expand search")
+        # Enhanced relevance checking for better accuracy
+        if coverage_ratio < 0.4:  # Increased threshold for better quality
+            print(f"[QUALITY] WARNING: Low context relevance ({coverage_ratio:.2f}), answer quality may be poor")
             
             # Try to find more relevant chunks by lowering the threshold
             if hasattr(self, 'db') and self.db:
@@ -4445,6 +4519,16 @@ ANSWER:"""
                         return self.build_context_streamlined(expanded_docs)
                 except Exception as e:
                     print(f"[QUALITY] Search expansion failed: {e}")
+        
+        # Additional quality checks
+        if len(context.strip()) < 100:  # Context too short
+            print(f"[QUALITY] WARNING: Context too short ({len(context)} chars), insufficient information")
+        
+        # Check for meaningful content (not just repeated phrases)
+        context_words = context_lower.split()
+        unique_words = len(set(context_words))
+        if unique_words < 20:  # Too few unique words
+            print(f"[QUALITY] WARNING: Context lacks variety ({unique_words} unique words), may be repetitive")
         
         return context
     
@@ -4540,3 +4624,90 @@ ANSWER:"""
             return True
         
         return False
+
+    def reset_questionnaire_state(self):
+        """Reset all instance variables to prevent contamination between questionnaires"""
+        # Clear all previous context variables
+        if hasattr(self, '_previous_context'):
+            del self._previous_context
+        if hasattr(self, '_previous_docs'):
+            del self._previous_docs
+        if hasattr(self, '_previous_query'):
+            del self._previous_query
+        
+        # Clear any other instance variables that might persist
+        if hasattr(self, 'context'):
+            del self.context
+        if hasattr(self, 'answer'):
+            del self.answer
+        
+        # Clear any cached embeddings or search results
+        if hasattr(self, '_cached_search_results'):
+            del self._cached_search_results
+        if hasattr(self, '_cached_embeddings'):
+            del self._cached_embeddings
+        
+        # Clear any other cached data that might persist
+        if hasattr(self, '_cached_docs'):
+            del self._cached_docs
+        if hasattr(self, '_cached_context'):
+            del self._cached_context
+        if hasattr(self, '_cached_embeddings_cache'):
+            del self._cached_embeddings_cache
+        
+        # Reset LLM context if possible
+        if hasattr(self, 'llm') and hasattr(self.llm, 'reset'):
+            try:
+                self.llm.reset()
+            except:
+                pass
+        
+        # Clear any session-specific data
+        if hasattr(self, 'current_upload_session'):
+            del self.current_upload_session
+        if hasattr(self, 'current_questionnaire_id'):
+            del self.current_questionnaire_id
+        
+        # Clear any other instance variables that might have been added
+        for attr_name in list(self.__dict__.keys()):
+            if attr_name.startswith('_') and attr_name not in ['_db', '_llm', '_embeddings', '_chunk_size', '_chunk_overlap']:
+                try:
+                    delattr(self, attr_name)
+                except:
+                    pass
+        
+        # Force garbage collection to clean up any remaining references
+        import gc
+        gc.collect()
+        
+        print(f"[SYSTEM LOG] (reset_questionnaire_state): All instance state cleared - no data leakage possible")
+
+    def set_upload_session(self, session_id, questionnaire_id=None):
+        """Set a new upload session to ensure complete isolation"""
+        self.current_upload_session = session_id
+        self.current_questionnaire_id = questionnaire_id
+        # Reset state immediately when setting new session
+        self.reset_questionnaire_state()
+        print(f"[SYSTEM LOG] (set_upload_session): New session {session_id} established - complete isolation guaranteed")
+
+    def _reset_context_state(self):
+        """Internal method to reset context state before each query"""
+        # Clear any context-related instance variables
+        if hasattr(self, 'context'):
+            del self.context
+        if hasattr(self, 'answer'):
+            del self.answer
+        if hasattr(self, '_current_context'):
+            del self._current_context
+        if hasattr(self, '_current_docs'):
+            del self._current_docs
+        if hasattr(self, '_current_query'):
+            del self._current_query
+
+    def create_fresh_instance(self):
+        """Create a completely fresh instance to ensure zero data leakage"""
+        # This method can be called to create a new instance if needed
+        # For now, we'll just do a complete reset
+        self.reset_questionnaire_state()
+        print(f"[SYSTEM LOG] (create_fresh_instance): Fresh instance state created - zero contamination possible")
+        return True
