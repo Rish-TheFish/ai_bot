@@ -25,7 +25,6 @@ psycopg2-binary==2.9.10  # PostgreSQL database adapter
 # === System Utilities ===
 psutil==6.1.0  # System and process monitoring
 requests>=2.31.0  # HTTP library for API calls
-pickle5==0.0.12  # Enhanced pickle for Python 3.8+ (fallback compatibility)
 
 # === Optional: Table Extraction (Heavy - install only if needed) ===
 pandas==1.5.3  # Data manipulation and analysis

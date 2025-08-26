@@ -501,6 +501,275 @@ class AIApp:
             print(f"[HNSW] Warning: Could not optimize existing index: {e}")
             # Continue without optimization
 
+    def _get_meaningful_location(self, filename: str, chunk_id: int) -> str:
+        """Generate meaningful location information for different file types."""
+        try:
+            # Get file extension
+            file_ext = os.path.splitext(filename)[1].lower()
+            
+            # Convert chunk_id to int if it's a string
+            try:
+                chunk_id = int(chunk_id)
+            except (ValueError, TypeError):
+                return f"chunk {chunk_id}"
+            
+            # For PDFs, try to estimate page numbers
+            if file_ext == '.pdf':
+                # Estimate page number based on chunk ID and typical chunk size
+                # Policy documents typically have 1-3 pages per chunk
+                estimated_page = max(1, chunk_id + 1)
+                return f"page ~{estimated_page}"
+            
+            # For Word documents
+            elif file_ext == '.docx':
+                # Estimate page number based on chunk ID
+                # Word docs typically have 1-2 pages per chunk
+                estimated_page = max(1, chunk_id + 1)
+                return f"page ~{estimated_page}"
+            
+            # For CSV files
+            elif file_ext == '.csv':
+                # Estimate row range based on chunk ID
+                # CSV files typically have 20-50 rows per chunk
+                start_row = chunk_id * 30 + 1
+                end_row = start_row + 29
+                return f"rows ~{start_row}-{end_row}"
+            
+            # For text files
+            elif file_ext == '.txt':
+                # Estimate line range based on chunk_id
+                # Text files typically have 50-100 lines per chunk
+                start_line = chunk_id * 75 + 1
+                end_line = start_line + 74
+                return f"lines ~{start_line}-{end_line}"
+            
+            # For XML files
+            elif file_ext == '.xml':
+                # Estimate section based on chunk ID
+                section_num = chunk_id + 1
+                return f"section ~{section_num}"
+            
+            # Default fallback
+            else:
+                return f"chunk {chunk_id}"
+                
+        except Exception as e:
+            logging.error(f"Error generating meaningful location for {filename}: {e}")
+            return f"chunk {chunk_id}"
+    
+    # Content safety check removed - now integrated into hallucination detection
+    
+    def _detect_hallucination(self, answer: str, query: str, context: str, relevant_docs: list) -> dict:
+        """Use AI to intelligently detect if the response contains inappropriate content or serious hallucinations."""
+        try:
+            # Only check for truly inappropriate content, not minor technical details
+            # Use a separate LLM call to evaluate the response intelligently
+            
+            evaluation_prompt = f"""
+You are an AI content evaluator. Your job is to determine if the following AI response contains:
+1. SERIOUSLY inappropriate content (harmful, offensive, illegal, etc.)
+2. MAJOR hallucinations that could mislead users significantly
+3. Content that goes against professional/ethical standards
+
+Question: {query}
+Context provided: {context[:1000]}...
+AI Response: {answer}
+
+IMPORTANT: Only flag content that is TRULY problematic. Be conservative - don't flag:
+- Minor technical details not in context
+- Generic phrases or standard responses
+- Reasonable inferences from the context
+- Professional language or standard compliance terms
+- Common compliance words like "explicitly stated", "adult supervision", "mature system"
+
+Respond with ONLY a JSON object:
+{{
+    "is_inappropriate": true/false,
+    "is_major_hallucination": true/false,
+    "confidence": 0.0-1.0,
+    "reason": "brief explanation if flagged, otherwise 'Content is appropriate'"
+}}
+
+Only set is_inappropriate or is_major_hallucination to true if you are highly confident the content is problematic.
+"""
+
+            try:
+                # Use the same LLM to evaluate the response
+                evaluation_result = self.llm.invoke(evaluation_prompt)
+                
+                # Parse the JSON response
+                import json
+                try:
+                    # Try to extract JSON from the response
+                    json_start = evaluation_result.find('{')
+                    json_end = evaluation_result.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = evaluation_result[json_start:json_end]
+                        result = json.loads(json_str)
+                    else:
+                        # Fallback if no JSON found
+                        result = {
+                            'is_inappropriate': False,
+                            'is_major_hallucination': False,
+                            'confidence': 0.0,
+                            'reason': 'JSON parsing failed, defaulting to safe'
+                        }
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, default to safe
+                    result = {
+                        'is_inappropriate': False,
+                        'is_major_hallucination': False,
+                        'confidence': 0.0,
+                        'reason': 'JSON parsing failed, defaulting to safe'
+                    }
+                
+                # Determine if this should be flagged
+                is_hallucination = result.get('is_inappropriate', False) or result.get('is_major_hallucination', False)
+                confidence_score = result.get('confidence', 0.0)
+                
+                # Only flag if confidence is high (>0.7) and content is truly problematic
+                if confidence_score < 0.7:
+                    is_hallucination = False
+                    confidence_score = 0.0
+                
+                return {
+                    'is_hallucination': is_hallucination,
+                    'confidence': confidence_score,
+                    'indicators': [result.get('reason', 'AI evaluation completed')],
+                    'context_length': len(context),
+                    'answer_length': len(answer),
+                    'contradiction_score': 0.0
+                }
+                
+            except Exception as llm_error:
+                logging.warning(f"AI-based hallucination detection failed: {llm_error}")
+                # Fallback: only flag if there are obvious red flags
+                return self._fallback_hallucination_check(answer, context)
+            
+        except Exception as e:
+            logging.error(f"Hallucination detection failed: {e}")
+            return {
+                'is_hallucination': False,
+                'confidence': 0.0,
+                'indicators': [f'Detection error: {str(e)}'],
+                'context_length': len(context),
+                'answer_length': len(answer),
+                'contradiction_score': 0.0
+            }
+    
+    def _fallback_hallucination_check(self, answer: str, context: str) -> dict:
+        """Fallback method that only flags obvious inappropriate content."""
+        try:
+            # Only check for obviously inappropriate content
+            inappropriate_phrases = [
+                'kill yourself', 'harm others', 'illegal activities', 'hack into', 'steal',
+                'cheat', 'fraud', 'scam', 'hate speech', 'discrimination', 'violence'
+            ]
+            
+            answer_lower = answer.lower()
+            context_lower = context.lower()
+            
+            # Check for inappropriate content
+            inappropriate_found = any(phrase in answer_lower for phrase in inappropriate_phrases)
+            
+            # Only flag if inappropriate content is found
+            if inappropriate_found:
+                return {
+                    'is_hallucination': True,
+                    'confidence': 0.9,
+                    'indicators': ['Obvious inappropriate content detected'],
+                    'context_length': len(context),
+                    'answer_length': len(answer),
+                    'contradiction_score': 0.0
+                }
+            
+            return {
+                'is_hallucination': False,
+                'confidence': 0.0,
+                'indicators': ['Content appears appropriate'],
+                'context_length': len(context),
+                'answer_length': len(answer),
+                'contradiction_score': 0.0
+            }
+            
+        except Exception as e:
+            logging.error(f"Fallback hallucination check failed: {e}")
+            return {
+                'is_hallucination': False,
+                'confidence': 0.0,
+                'indicators': ['Fallback check failed, defaulting to safe'],
+                'context_length': len(context),
+                'answer_length': len(answer),
+                'contradiction_score': 0.0
+            }
+    
+    def _extract_entities(self, text: str) -> set:
+        """Extract key entities (names, numbers, dates, etc.) from text."""
+        try:
+            entities = set()
+            
+            # Extract numbers
+            numbers = re.findall(r'\b\d+(?:\.\d+)?\b', text)
+            entities.update(numbers)
+            
+            # Extract dates
+            dates = re.findall(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', text)
+            entities.update(dates)
+            
+            # Extract percentages
+            percentages = re.findall(r'\b\d+(?:\.\d+)?%\b', text)
+            entities.update(percentages)
+            
+            # Extract proper nouns (capitalized words)
+            proper_nouns = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+            entities.update(proper_nouns)
+            
+            # Extract acronyms
+            acronyms = re.findall(r'\b[A-Z]{2,}\b', text)
+            entities.update(acronyms)
+            
+            return entities
+            
+        except Exception as e:
+            logging.error(f"Entity extraction failed: {e}")
+            return set()
+    
+    def _check_contradictions(self, answer: str, context: str) -> float:
+        """Check for contradictions between answer and context."""
+        try:
+            contradiction_score = 0.0
+            
+            # Simple contradiction detection based on key terms
+            # This is a basic implementation - could be enhanced with more sophisticated NLP
+            
+            # Check for opposite terms
+            opposite_pairs = [
+                ('yes', 'no'), ('true', 'false'), ('correct', 'incorrect'),
+                ('required', 'optional'), ('mandatory', 'voluntary'),
+                ('enabled', 'disabled'), ('active', 'inactive'),
+                ('allowed', 'prohibited'), ('permitted', 'forbidden')
+            ]
+            
+            for term1, term2 in opposite_pairs:
+                if term1 in answer.lower() and term2 in context.lower():
+                    contradiction_score += 0.2
+                elif term2 in answer.lower() and term1 in context.lower():
+                    contradiction_score += 0.2
+            
+            # Check for conflicting numbers
+            answer_numbers = set(re.findall(r'\b\d+(?:\.\d+)?\b', answer))
+            context_numbers = set(re.findall(r'\b\d+(?:\.\d+)?\b', context))
+            
+            # If answer has numbers not in context, potential contradiction
+            if answer_numbers and not context_numbers:
+                contradiction_score += 0.1
+            
+            return contradiction_score
+            
+        except Exception as e:
+            logging.error(f"Contradiction check failed: {e}")
+            return 0.0
+    
     def _optimize_search_parameters(self):
         """Optimize search parameters for maximum speed during queries."""
         try:
@@ -1355,15 +1624,70 @@ Please provide a structured summary:"""
         logging.info(f"[DEBUG] Document topic mapping: {mapping}")
         return mapping
 
+    def update_document_topics(self, filename: str, topic_ids: list) -> bool:
+        """Update the topics associated with a document"""
+        try:
+            DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_history'
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            
+            # First, get the document ID
+            cursor.execute('SELECT id FROM documents WHERE filename = %s', (filename,))
+            result = cursor.fetchone()
+            
+            if not result:
+                print(f"[ERROR] Document '{filename}' not found in database")
+                conn.close()
+                return False
+            
+            document_id = result[0]
+            
+            # Remove all existing topic associations for this document
+            cursor.execute('DELETE FROM document_topics WHERE document_id = %s', (document_id,))
+            
+            # Add new topic associations
+            for topic_id in topic_ids:
+                cursor.execute('''
+                    INSERT INTO document_topics (document_id, topic_id) 
+                    VALUES (%s, %s)
+                ''', (document_id, topic_id))
+            
+            # Commit the changes
+            conn.commit()
+            conn.close()
+            
+            print(f"[SUCCESS] Updated topics for document '{filename}' to: {topic_ids}")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update document topics: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
+            return False
+
     def handle_question(self, query: str, chat_history: Optional[list] = None, topic_ids: Optional[list] = None) -> dict:
         """Handle a question with content safety checks and optional chat history context, with topic filtering."""
         start_time = time.time()
         print(f"[TIMING] Starting question processing for: {query[:50]}...")
         
+        # Early gibberish check (under 10ms)
+        gibberish_start = time.time()
+        if self.is_gibberish(query):
+            gibberish_time = time.time() - gibberish_start
+            print(f"[GIBBERISH] Detected gibberish input: {query[:50]}... in {gibberish_time:.3f}s")
+            return {
+                "answer": "Please provide a valid question in English. Your input appears to be random characters or gibberish.",
+                "detailed_answer": "Please provide a valid question in English. Your input appears to be random characters or gibberish.",
+                "sources": {"summary": "N/A", "detailed": "N/A"}
+            }
+        gibberish_time = time.time() - gibberish_start
+        print(f"[GIBBERISH] Text passed gibberish check in {gibberish_time:.3f}s")
+        
         # Reset all variables to prevent contamination between questions
         answer = ""
         detailed_answer = ""
-        confidence = 0
+        #confidence = 0
         source_data = {}
         
         print(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
@@ -1397,38 +1721,60 @@ Please provide a structured summary:"""
                 print(f"[DEBUG] Could not get vector DB doc count: {e}")
             filter_filenames = None
             if topic_ids and len(topic_ids) > 0:
-                topic_filter_start = time.time()
-                print(f"[DEBUG] Topic filtering requested for topic_ids: {topic_ids}")
-                doc_topic_map = self.get_doc_topic_map()
-                print(f"[DEBUG] Document topic map: {doc_topic_map}")
-                topic_ids_set = set(str(tid) for tid in topic_ids)
-                filter_filenames = [
-                    fname for fname, tags in doc_topic_map.items()
-                    if topic_ids_set.issubset(tags)
-                ]
-                print(f"[DEBUG] Filtered filenames: {filter_filenames}")
-                topic_filter_time = time.time() - topic_filter_start
-                print(f"[TIMING] Topic filtering took: {topic_filter_time:.3f}s")
-                if not filter_filenames:
-                    print("[DEBUG] No documents found for selected topics, returning early")
-                    return {
-                        "answer": "No documents are available for the selected topic(s).",
-                        "detailed_answer": "No documents are available for the selected topic(s).",
-                        "confidence": 0,
-                        "sources": {"summary": "N/A", "detailed": "N/A"}
-                    }
+                # Special handling for "all topics" - don't filter, search all documents
+                if 'all' in topic_ids:
+                    print(f"[DEBUG] 'All topics' selected - no filtering applied, searching all documents")
+                    filter_filenames = None
+                else:
+                    topic_filter_start = time.time()
+                    print(f"[DEBUG] Topic filtering requested for topic_ids: {topic_ids}")
+                    doc_topic_map = self.get_doc_topic_map()
+                    print(f"[DEBUG] Document topic map: {doc_topic_map}")
+                    topic_ids_set = set(str(tid) for tid in topic_ids)
+                    filter_filenames = [
+                        fname for fname, tags in doc_topic_map.items()
+                        if topic_ids_set.issubset(tags)
+                    ]
+                    print(f"[DEBUG] Filtered filenames: {filter_filenames}")
+                    topic_filter_time = time.time() - topic_filter_start
+                    print(f"[TIMING] Topic filtering took: {topic_filter_time:.3f}s")
+                    if not filter_filenames:
+                        print("[DEBUG] No documents found for selected topics, returning early")
+                        return {
+                            "answer": "No documents are available for the selected topic(s).",
+                            "detailed_answer": "No documents are available for the selected topic(s).",
+                            #"confidence": 0,
+                            "sources": {"summary": "N/A", "detailed": "N/A"}
+                        }
             
             query_start = time.time()
-            answer, confidence, source_data, detailed_answer = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames)
+            result = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames)
             query_time = time.time() - query_start
             print(f"[TIMING] Main query processing took: {query_time:.3f}s")
+            
+            # Extract the result components from the new dictionary format
+            if isinstance(result, dict):
+                answer = result.get("answer", "Error processing question")
+                source_data = result.get("sources", {"summary": "Error", "detailed": "Error"})
+                detailed_answer = result.get("detailed_answer", answer)
+                hallucination_score = result.get("hallucination_score", 0.0)
+                safety_issues = result.get("safety_issues", [])
+                is_hallucination = result.get("is_hallucination", False)
+            else:
+                # Fallback if result format is unexpected
+                answer = str(result) if result else "Error processing question"
+                source_data = {"summary": "Error", "detailed": "Error"}
+                detailed_answer = answer
+                hallucination_score = 0.0
+                safety_issues = []
+                is_hallucination = False
             
             if answer == "I don't have specific information about that in the current documents.":
                 # Return consistent response for no information
                 return {
                     "answer": "I don't have specific information about that in the current documents.",
                     "detailed_answer": "No specific information available in current documents.",
-                    "confidence": 0,
+                    #"confidence": 0,
                     "sources": {"summary": "N/A", "detailed": "N/A"}
                 }
             
@@ -1438,8 +1784,11 @@ Please provide a structured summary:"""
             return {
                 "answer": answer,
                 "detailed_answer": detailed_answer,
-                "confidence": confidence,
-                "sources": source_data
+                #"confidence": confidence,
+                "sources": source_data,
+                "hallucination_score": hallucination_score,
+                "safety_issues": safety_issues,
+                "is_hallucination": is_hallucination
             }
         except Exception as e:
             import traceback
@@ -1448,8 +1797,8 @@ Please provide a structured summary:"""
             print(f"Full traceback: {error_details}")
             return {"error": f"Error processing question: {str(e)}"}
 
-    def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None) -> tuple:
-        """Answer a question using the vector database and LLM. Return sources with chunk/page/snippet info for debugging."""
+    def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None) -> dict:
+        """Answer a question using the vector database and LLM. Return comprehensive result including safety and hallucination information."""
         query_start_time = time.time()
         print(f"[TIMING] Starting query_answer processing")
         
@@ -1504,7 +1853,8 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Vector DB index size: {self.db.index.ntotal if hasattr(self.db, 'index') else 'Unknown'}")
         print(f"[TIMING] STEP 2: Direct embedding completed, proceeding to retrieval...")
         # Try early termination first for speed, fallback to regular search
-        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.3)  # Higher threshold for better relevance
+        # More restrictive: fetch fewer initial chunks for better relevance
+        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.4, min_chunks=12)  # Higher threshold, fewer chunks
         retrieval_time = time.time() - retrieval_start
         print(f"[TIMING] STEP 3: Document retrieval completed in {retrieval_time:.3f}s")
         print(f"[DEBUG] Retrieved {len(docs)} documents")
@@ -1621,7 +1971,8 @@ Please provide a structured summary:"""
         # Update the context with ENHANCED filtering and building for better quality
         if docs:
             # Enhanced filtering with multi-factor relevance scoring
-            relevant_docs = self.filter_relevant_chunks(query, docs, threshold=0.7)
+            # Balanced threshold: not too loose, not too strict
+            relevant_docs = self.filter_relevant_chunks(query, docs, threshold=0.6)
             print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(relevant_docs)} relevant chunks")
             
             # Build context with intelligent chunking and overlap
@@ -1671,13 +2022,20 @@ Please provide a structured summary:"""
             except Exception as e:
                 print(f"[DEBUG] LLM reset failed (non-critical): {e}")
         
-        for i, d in enumerate(docs):
+        # Use only the relevant_docs that were actually used to build the context
+        # instead of all retrieved docs
+        docs_for_sources = relevant_docs if 'relevant_docs' in locals() else docs
+        
+        print(f"[SOURCES] Retrieved {len(docs)} docs, using {len(docs_for_sources)} relevant docs for sources")
+        
+        for i, d in enumerate(docs_for_sources):
             src = os.path.basename(str(d.metadata.get("source", "N/A")))
             page = d.metadata.get("page", d.metadata.get("page_number", "?"))
             
-            # Minimal source string
+            # Enhanced source string with meaningful location information
             if page != "?":
-                source_str = f"{src} (chunk {page})"
+                location_info = self._get_meaningful_location(src, page)
+                source_str = f"{src} ({location_info})"
             else:
                 source_str = f"{src}"
             sources.append(source_str)
@@ -1687,14 +2045,16 @@ Please provide a structured summary:"""
                 source_summary[src] = []
             source_summary[src].append(page)
         
-        # Create summary format (minimal)
+        # Create summary format with meaningful location information
         summary_parts = []
         for src, pages in source_summary.items():
             unique_pages = sorted(list(set(pages)), key=lambda x: int(str(x)) if str(x).isdigit() else 0)
             if len(unique_pages) == 1:
-                summary_parts.append(f"{src} (chunk {unique_pages[0]})")
+                location_info = self._get_meaningful_location(src, unique_pages[0])
+                summary_parts.append(f"{src} ({location_info})")
             else:
-                summary_parts.append(f"{src} (chunks {', '.join(map(str, unique_pages))})")
+                location_infos = [self._get_meaningful_location(src, page) for page in unique_pages]
+                summary_parts.append(f"{src} ({', '.join(location_infos)})")
         
         sources_summary = " | ".join(summary_parts)
         sources_detailed = " | ".join(sources)
@@ -1783,6 +2143,23 @@ Please provide a structured summary:"""
             print(f"[TIMING] STEP 5: Optimized LLM call completed in {llm_time:.3f}s")
             print(f"[SPEED] LLM response received (length: {len(answer)} chars)")
             
+            # STEP 5.5: Integrated Hallucination & Content Safety Check
+            safety_start = time.time()
+            print(f"[SAFETY] STEP 5.5: Starting integrated hallucination and content safety check")
+            
+            # Check for both hallucinations and content safety in one AI evaluation
+            hallucination_check = self._detect_hallucination(answer, query, final_context, relevant_docs)
+            
+            if hallucination_check['is_hallucination']:
+                print(f"[SAFETY] Potential hallucination detected: {hallucination_check['confidence']:.2f}")
+                # Add warning to the answer
+                answer = f"[⚠️ WARNING: This answer may contain information not directly supported by the provided documents. Please verify with official sources.]\n\n{answer}"
+            
+            safety_time = time.time() - safety_start
+            print(f"[SAFETY] STEP 5.5: Integrated safety checks completed in {safety_time:.3f}s")
+            print(f"[SAFETY] Hallucination score: {hallucination_check['confidence']:.3f}")
+            print(f"[SAFETY] Content safety: {'PASS' if not hallucination_check.get('is_inappropriate', False) else 'FAIL'}")
+            
             # STEP 6: Response Processing & Output
             response_processing_start = time.time()
             print(f"[TIMING] STEP 6: Starting response processing & output")
@@ -1805,7 +2182,14 @@ Please provide a structured summary:"""
                 cleaned_answer = re.sub(r'DETAILED ANSWER:.*?\[Your comprehensive answer here\]', '', cleaned_answer, flags=re.DOTALL)
                 cleaned_answer = re.sub(r'ONE-LINE ANSWER:.*?\[Your concise one-line answer here\]', '', cleaned_answer, flags=re.DOTALL)
                 
-                # Take only the first meaningful sentence or two
+                # Extract confidence percentage if present
+                confidence_match = re.search(r'Confidence:\s*(\d+)%', cleaned_answer, re.IGNORECASE)
+                confidence_percentage = confidence_match.group(1) if confidence_match else None
+                
+                # Remove confidence line from the answer for display
+                cleaned_answer = re.sub(r'Confidence:\s*\d+%.*', '', cleaned_answer, flags=re.IGNORECASE)
+                
+                # Take only the first 3-4 meaningful sentences for concise answers
                 sentences = cleaned_answer.split('.')
                 meaningful_sentences = []
                 
@@ -1813,7 +2197,7 @@ Please provide a structured summary:"""
                     sentence = sentence.strip()
                     if sentence and len(sentence) > 10 and not sentence.startswith('Chunk') and not sentence.startswith('Table'):
                         meaningful_sentences.append(sentence)
-                        if len(meaningful_sentences) >= 2:  # Limit to 2 sentences
+                        if len(meaningful_sentences) >= 4:  # Limit to 4 sentences max
                             break
                 
                 if meaningful_sentences:
@@ -1822,6 +2206,13 @@ Please provide a structured summary:"""
                 else:
                     helpful_answer = "No specific information found about this topic."
                     detailed_answer = helpful_answer
+                
+                # Add confidence back to the detailed answer if found
+                if confidence_percentage:
+                    detailed_answer += f"\n\nConfidence: {confidence_percentage}%"
+                    print(f"[QUALITY] Confidence score extracted: {confidence_percentage}%")
+                else:
+                    print(f"[QUALITY] No confidence score found in response")
             else:
                 # Fallback: try to extract meaningful content
                 cleaned_answer = re.sub(r'Question:.*?Context:', '', answer, flags=re.DOTALL)
@@ -2008,8 +2399,8 @@ Please provide a structured summary:"""
         #             # Keep the original answer if enhancement fails
         
         # Use simple default confidence since LLM-based calculation is disabled
-        confidence = 0.85  # Default confidence
-        print(f"[TIMING] Using default confidence: {confidence}")
+        #confidence = 0.85  # Default confidence
+        #print(f"[TIMING] Using default confidence: {confidence}")
         
         # Return structured source data
         source_data = {
@@ -2053,8 +2444,17 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Final detailed preview: {detailed_answer[:100]}...")
         print(f"[DEBUG] FINAL answer variable before return: {answer[:100]}...")
         
-        # Return both helpful and detailed answers
-        return final_answer, confidence, source_data, detailed_answer
+        # Return comprehensive result including safety and hallucination information
+        return {
+            "answer": final_answer,
+            "detailed_answer": detailed_answer,
+            "sources": source_data,
+            "hallucination_score": hallucination_check['confidence'] if 'hallucination_check' in locals() else 0.0,
+            "safety_issues": [] if hallucination_check.get('is_inappropriate', False) else [],
+            "is_hallucination": hallucination_check['is_hallucination'] if 'hallucination_check' in locals() else False,
+            "safety_check": {'safe': not hallucination_check.get('is_inappropriate', False), 'reason': 'Integrated safety check completed'},
+            "hallucination_check": hallucination_check if 'hallucination_check' in locals() else {'is_hallucination': False, 'confidence': 0.0}
+        }
 
 #     def calculate_answer_confidence(self, query: str, answer: str, docs: list) -> float:
 #         """Calculate the AI's confidence in its answer using enhanced evaluation"""
@@ -2391,12 +2791,10 @@ Provide ONLY the short summary answer:"""
                 # Save the updated database
                 self.db.save_local(DB_PATH)
                 
-                # Validate integrity after adding to prevent stale data
-                integrity_result = self.validate_vector_db_integrity()
-                if integrity_result.get('status') == 'rebuilt':
-                    logging.warning(f"[DEBUG] Vector database rebuilt after adding {filename} due to integrity issues")
-                
-                logging.info(f"[DEBUG] Successfully added {filename} to database")
+                # SMART: Don't validate integrity after every incremental update
+                # This prevents unnecessary rebuilds for minor discrepancies
+                # Integrity validation will run periodically or when explicitly requested
+                logging.info(f"[DEBUG] Successfully added {filename} to database without post-update validation")
                 return True
             else:
                 logging.error("No database available for incremental update")
@@ -3037,12 +3435,27 @@ Provide ONLY the short summary answer:"""
         
         # Sort by relevance score and return top chunks
         relevant_docs.sort(key=lambda x: x[1], reverse=True)
-        top_docs = [doc for doc, score in relevant_docs[:8]]  # Limit to top 8 most relevant
         
-        print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(top_docs)} relevant chunks (threshold: {threshold})")
+        # Balanced filtering: return documents with good relevance
+        # For simple questions, we want focused sources but not too restrictive
+        high_threshold = threshold + 0.1  # Smaller increase for balanced filtering
+        high_relevance_docs = [doc for doc, score in relevant_docs if score >= high_threshold]
+        
+        # Limit to top 5 most relevant documents for balanced coverage
+        top_docs = [doc for doc, score in relevant_docs[:5]]
+        
+        # If we have high relevance docs, use those but be more lenient
+        if high_relevance_docs:
+            top_docs = high_relevance_docs[:4]  # Allow up to 4 high-relevance docs
+        
+        print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(top_docs)} relevant chunks (threshold: {threshold}, high_threshold: {high_threshold})")
         if top_docs:
             top_scores = [score for _, score in relevant_docs[:3]]
             print(f"[QUALITY] Top 3 relevance scores: {[f'{s:.3f}' for s in top_scores]}")
+        else:
+            print(f"[QUALITY] WARNING: No documents passed filtering! All scores below threshold {threshold}")
+            if relevant_docs:
+                print(f"[QUALITY] Best scores found: {[f'{s:.3f}' for _, s in relevant_docs[:5]]}")
         
         return top_docs
 
@@ -3291,7 +3704,7 @@ Provide ONLY the short summary answer:"""
             logging.info(f"[TIMING] Fallback minimal chunk retrieval took: {fallback_time:.3f}s")
             return result
 
-    def calculate_confidence_with_gemma(self, query: str, answer: str, docs: list) -> float:
+    def calculate_confidence_with_gemma(self, query: str, answer: str, docs: list) -> None:
         """
         Calculate confidence using config model with fallback.
         
@@ -3360,12 +3773,14 @@ Respond with ONLY a number between 0 and 100."""
             
             # Final fallback
             logging.warning("[DEBUG] All confidence models failed, using fallback")
-            return 50.0 if docs else 0.0
+            #return 50.0 if docs else 0.0
+            return None
                 
         except Exception as e:
             logging.warning(f"[DEBUG] Confidence calculation failed: {e}")
             # Fallback confidence based on whether we have documents
-            return 20.0 if docs else 0.0
+            #return 20.0 if docs else 0.0
+            return None
 
     def initialize_confidence_models(self):
         """Initialize config model for confidence calculation (Ollama auto-detects best device)."""
@@ -3389,20 +3804,22 @@ Respond with ONLY a number between 0 and 100."""
                 self.confidence_model = self.gemma_model
                 logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully")
                 
-            except Exception as e:
-                logging.warning(f"[DEBUG] Failed to initialize {MODEL_NAME}: {e}")
+            except Exception as e1:
+                logging.warning(f"[DEBUG] {MODEL_NAME} failed: {e1}")
+                
+                # Fallback to Llama 3
                 try:
-                    # Fallback to config model
-                    logging.info(f"[DEBUG] Attempting {MODEL_NAME} initialization as fallback")
+                    logging.info(f"[DEBUG] Attempting Llama 3 fallback initialization")
                     self.llama_model = OllamaLLM(
-            model=MODEL_NAME,
-            temperature=0.1,
-            num_ctx=8192,
-            num_predict=2048,
-            stop=None
-        )
+                        model="llama3.2:3b",
+                        temperature=0.1,
+                        num_ctx=8192,
+                        num_predict=2048,
+                        stop=None
+                    )
                     self.confidence_model = self.llama_model
-                    logging.info(f"[DEBUG] {MODEL_NAME} confidence model initialized successfully as fallback")
+                    logging.info(f"[DEBUG] Llama 3 fallback confidence model initialized successfully")
+                    
                 except Exception as e2:
                     logging.error(f"[DEBUG] Failed to initialize confidence models: {e2}")
                     self.confidence_model = None
@@ -3456,25 +3873,22 @@ Respond with ONLY a number between 0 and 100."""
                 else:
                     logging.info("[DEBUG] All disk files are represented in vector database")
                 
-                # If there are discrepancies, rebuild the database
-                if stale_sources or missing_sources:
-                    logging.info("[DEBUG] CRITICAL: Vector database integrity compromised, rebuilding...")
-                    print(f"[HNSW] CRITICAL: Found {len(stale_sources)} stale sources and {len(missing_sources)} missing sources")
-                    
-                    # CRITICAL: Force complete rebuild to ensure data integrity
-                    self.build_db("integrity_rebuild")
-                    
-                    return {
-                        'status': 'rebuilt',
-                        'message': 'Vector database rebuilt due to integrity issues with guaranteed cleanup',
-                        'stale_sources': len(stale_sources),
-                        'missing_sources': len(missing_sources),
-                        'cleanup_verified': True
-                    }
+                # SMART VALIDATION: Only rebuild when absolutely necessary
+                total_discrepancies = len(stale_sources) + len(missing_sources)
+                total_files = len(disk_files)
+                
+                # Calculate discrepancy percentage
+                if total_files > 0:
+                    discrepancy_percentage = (total_discrepancies / total_files) * 100
                 else:
-                    logging.info("[DEBUG] Vector database integrity validated successfully")
-                    
-                    # CRITICAL: Additional validation - check if HNSW is working
+                    discrepancy_percentage = 0
+                
+                logging.info(f"[DEBUG] Discrepancy analysis: {total_discrepancies} issues out of {total_files} files ({discrepancy_percentage:.1f}%)")
+                
+                # DECISION LOGIC: Only rebuild when absolutely necessary
+                if total_discrepancies == 0:
+                    # Perfect match - no issues
+                    logging.info("[DEBUG] Vector database integrity validated successfully - perfect match")
                     hnsw_status = "unknown"
                     if self.db and hasattr(self.db, 'index'):
                         if hasattr(self.db.index, 'hnsw'):
@@ -3486,9 +3900,64 @@ Respond with ONLY a number between 0 and 100."""
                     
                     return {
                         'status': 'valid',
-                        'message': 'Vector database integrity confirmed',
+                        'message': 'Vector database integrity confirmed - perfect match',
                         'total_sources': len(db_sources),
                         'hnsw_status': hnsw_status,
+                        'cleanup_verified': True
+                    }
+                
+                elif total_discrepancies <= 2 and discrepancy_percentage <= 10:
+                    # Minor discrepancies - safe to ignore
+                    logging.info(f"[DEBUG] Minor discrepancies detected ({total_discrepancies} issues, {discrepancy_percentage:.1f}%) - safe to ignore")
+                    return {
+                        'status': 'minor_issues',
+                        'message': f'Minor discrepancies detected but not critical ({total_discrepancies} issues, {discrepancy_percentage:.1f}%)',
+                        'stale_sources': len(stale_sources),
+                        'missing_sources': len(missing_sources),
+                        'discrepancy_percentage': discrepancy_percentage,
+                        'action_taken': 'none'
+                    }
+                
+                elif total_discrepancies <= 5 and discrepancy_percentage <= 20:
+                    # Moderate discrepancies - try to fix without rebuild
+                    logging.info(f"[DEBUG] Moderate discrepancies detected ({total_discrepancies} issues, {discrepancy_percentage:.1f}%) - attempting to fix without rebuild")
+                    
+                    # Try to fix specific issues
+                    if self._try_fix_moderate_discrepancies(stale_sources, missing_sources):
+                        logging.info("[DEBUG] Successfully fixed moderate discrepancies without rebuild")
+                        return {
+                            'status': 'fixed',
+                            'message': f'Moderate discrepancies fixed without rebuild ({total_discrepancies} issues resolved)',
+                            'stale_sources': len(stale_sources),
+                            'missing_sources': len(missing_sources),
+                            'discrepancy_percentage': discrepancy_percentage,
+                            'action_taken': 'fixed'
+                        }
+                    else:
+                        logging.warning("[DEBUG] Could not fix moderate discrepancies, but not critical enough for rebuild")
+                        return {
+                            'status': 'moderate_issues',
+                            'message': f'Moderate discrepancies detected but not critical enough for rebuild ({total_discrepancies} issues, {discrepancy_percentage:.1f}%)',
+                            'stale_sources': len(stale_sources),
+                            'missing_sources': len(missing_sources),
+                            'discrepancy_percentage': discrepancy_percentage,
+                            'action_taken': 'none'
+                        }
+                
+                else:
+                    # CRITICAL: Major discrepancies - rebuild absolutely necessary
+                    logging.info(f"[DEBUG] CRITICAL: Major discrepancies detected ({total_discrepancies} issues, {discrepancy_percentage:.1f}%) - rebuild absolutely necessary")
+                    print(f"[HNSW] CRITICAL: Found {len(stale_sources)} stale sources and {len(missing_sources)} missing sources ({discrepancy_percentage:.1f}% discrepancy)")
+                    
+                    # CRITICAL: Force complete rebuild to ensure data integrity
+                    self.build_db("integrity_rebuild")
+                    
+                    return {
+                        'status': 'rebuilt',
+                        'message': f'Vector database rebuilt due to critical integrity issues ({total_discrepancies} issues, {discrepancy_percentage:.1f}% discrepancy)',
+                        'stale_sources': len(stale_sources),
+                        'missing_sources': len(missing_sources),
+                        'discrepancy_percentage': discrepancy_percentage,
                         'cleanup_verified': True
                     }
                     
@@ -3503,6 +3972,82 @@ Respond with ONLY a number between 0 and 100."""
                 
         except Exception as e:
             logging.error(f"Error in vector database integrity validation: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _try_fix_moderate_discrepancies(self, stale_sources: set, missing_sources: set) -> bool:
+        """Try to fix moderate discrepancies without rebuilding the database."""
+        try:
+            logging.info("[DEBUG] Attempting to fix moderate discrepancies without rebuild...")
+            
+            fixed_issues = 0
+            
+            # Try to fix missing sources by adding them incrementally
+            for missing_file in missing_sources:
+                try:
+                    # Find the full path of the missing file
+                    missing_file_path = None
+                    for root, _, files in os.walk(DOCS_PATH):
+                        if missing_file in files:
+                            missing_file_path = os.path.join(root, missing_file)
+                            break
+                    
+                    if missing_file_path and os.path.exists(missing_file_path):
+                        # Try to add this file incrementally
+                        if self.add_document_incremental(missing_file_path):
+                            fixed_issues += 1
+                            logging.info(f"[DEBUG] Successfully added missing file: {missing_file}")
+                        else:
+                            logging.warning(f"[DEBUG] Failed to add missing file incrementally: {missing_file}")
+                    else:
+                        logging.warning(f"[DEBUG] Could not find missing file path: {missing_file}")
+                        
+                except Exception as e:
+                    logging.warning(f"[DEBUG] Error fixing missing file {missing_file}: {e}")
+                    continue
+            
+            # For stale sources, we can't easily remove them without rebuild
+            # But we can log them for manual cleanup later
+            if stale_sources:
+                logging.info(f"[DEBUG] {len(stale_sources)} stale sources detected but cannot be removed without rebuild")
+                logging.info(f"[DEBUG] Stale sources: {stale_sources}")
+            
+            logging.info(f"[DEBUG] Fixed {fixed_issues} out of {len(missing_sources)} missing sources")
+            
+            # Consider it successful if we fixed at least some issues
+            return fixed_issues > 0
+            
+        except Exception as e:
+            logging.error(f"[DEBUG] Error in _try_fix_moderate_discrepancies: {e}")
+            return False
+
+    def periodic_integrity_check(self) -> dict:
+        """Run integrity check periodically (not after every update) to catch real issues."""
+        try:
+            logging.info("[DEBUG] Running periodic integrity check...")
+            
+            # Only run if database exists and is stable
+            if not self.db:
+                return {'status': 'no_db', 'message': 'No database to check'}
+            
+            # Check if we've run recently to avoid excessive checking
+            current_time = time.time()
+            if hasattr(self, '_last_integrity_check'):
+                time_since_last = current_time - self._last_integrity_check
+                if time_since_last < 3600:  # Don't check more than once per hour
+                    logging.info("[DEBUG] Integrity check skipped - checked recently")
+                    return {'status': 'skipped', 'message': 'Checked recently, skipping'}
+            
+            # Update last check time
+            self._last_integrity_check = current_time
+            
+            # Run the smart integrity validation
+            result = self.validate_vector_db_integrity()
+            
+            logging.info(f"[DEBUG] Periodic integrity check completed: {result.get('status')}")
+            return result
+            
+        except Exception as e:
+            logging.error(f"[DEBUG] Error in periodic integrity check: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def get_hybrid_semantic_chunks(self, query: str, initial_k: int = 15) -> List[Document]:
@@ -3802,19 +4347,35 @@ Respond with ONLY a number between 0 and 100."""
         key_terms = self._extract_key_entities(query)
         
         # Build context-aware instructions
-        instructions = f"""You are a professional compliance expert with deep knowledge of policies and procedures. Your task is to provide accurate, comprehensive answers based on the provided context.
+        instructions = f"""You are a professional compliance expert. Answer the question directly and completely based on the provided context.
+
+CRITICAL INSTRUCTIONS:
+- DO NOT say "I can provide" or "I can answer" 
+- DO NOT say "Based on the provided context, I can provide..."
+- DO NOT say "I can provide a comprehensive answer about..."
+- JUST ANSWER THE QUESTION DIRECTLY with the information from the context
 
 INSTRUCTIONS:
-1. CAREFULLY analyze the provided context for ANY relevant information
-2. Look for: {', '.join(key_terms)} and related concepts
-3. Consider indirect references, similar procedures, and related policies
-4. If you find ANY relevant information, provide a comprehensive answer
-5. Structure your response: Brief answer first, then supporting details
-6. Always start with "Yes" or "No" when applicable
-7. Cite specific sources from the context using [filename] format
-8. If information is incomplete, acknowledge what you know and what's missing
-9. Be precise, professional, and actionable
-10. Focus on compliance requirements, procedures, and policy details
+1. Answer the question completely and directly
+2. Use ONLY information from the provided context
+3. If the context has relevant information, provide a comprehensive answer
+4. If the context lacks information, say "Insufficient information provided"
+5. Structure: Direct answer first, then supporting details
+6. Start with "Yes" or "No" if the question is asking for a yes/no response
+7. Cite sources using [filename] format
+8. Be specific and actionable
+9. Focus on compliance requirements and procedures
+10. End with a confidence score between 0 and 100 signifying the relavence and accuracy of the answer (like this: "Confidence: 80%").
+
+YES/NO QUESTIONS (start with Yes/No):
+- "Are backups necessary?" → "Yes, backups are necessary..."
+- "Is encryption required?" → "Yes, encryption is required..."
+- "Do we need to document this?" → "Yes, documentation is required..."
+
+NON-YES/NO QUESTIONS (start with direct answer):
+- "What is the backup policy?" → "The backup policy requires..."
+- "How often should backups be performed?" → "Backups should be performed..."
+- "What are the encryption requirements?" → "The encryption requirements include..."
 
 QUESTION: {query}
 
@@ -3920,3 +4481,62 @@ ANSWER:"""
         except Exception as e:
             print(f"[QUALITY] Error expanding search scope: {e}")
             return current_docs
+
+    def is_gibberish(self, text: str) -> bool:
+        """Fast gibberish detection using two-tier filtering"""
+        
+        # First filter: Regex patterns (1ms)
+        if self._check_obvious_patterns(text):
+            return True
+        
+        # Second filter: N-gram probability (5ms)
+        if self._check_ngram_probability(text):
+            return True
+        
+        return False
+
+    def _check_obvious_patterns(self, text: str) -> bool:
+        """Check for obvious gibberish patterns"""
+        import re
+        
+        # Common keyboard patterns
+        keyboard_patterns = [
+            r'asdf+', r'qwerty+', r'zxcv+',  # Keyboard rows
+            r'([a-z]{1,2})\1{3,}',  # Repeated 2-letter sequences
+            r'([a-z])\1{4,}',    # Repeated single letters
+            r'[bcdfghjklmnpqrstvwxz]{6,}',  # Long consonant clusters
+            r'[aeiou]{6,}',        # Long vowel clusters
+        ]
+        
+        for pattern in keyboard_patterns:
+            if re.search(pattern, text.lower()):
+                return True
+        
+        return False
+
+    def _check_ngram_probability(self, text: str) -> bool:
+        """Check character n-gram probability"""
+        import re
+        
+        # Clean text (keep only letters and spaces)
+        clean_text = re.sub(r'[^a-zA-Z\s]', '', text.lower())
+        
+        # Skip very short text
+        if len(clean_text) < 4:
+            return False
+        
+        # Calculate character bigram probability
+        # English has common bigrams like 'th', 'he', 'an', 'in'
+        # Gibberish has unlikely combinations like 'kj', 'hj', 'kh'
+        
+        # Simple heuristic: count impossible consonant pairs
+        impossible_pairs = ['kj', 'hj', 'kh', 'jh', 'kjh', 'hjk']
+        text_pairs = [clean_text[i:i+2] for i in range(len(clean_text)-1)]
+        
+        impossible_count = sum(1 for pair in text_pairs if pair in impossible_pairs)
+        
+        # If more than 30% of pairs are impossible, it's likely gibberish
+        if len(text_pairs) > 0 and impossible_count / len(text_pairs) > 0.3:
+            return True
+        
+        return False

@@ -3,6 +3,8 @@ services:
     build:
       context: ..  # Build from parent directory to access all files
       dockerfile: Docker_Container_Files/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
     image: dp-ai-assistant:latest  # Name the image dp-ai-assistant
     container_name: faq-bot
     restart: unless-stopped
@@ -15,9 +17,32 @@ services:
       - ../uploads:/app/uploads
       - postgres_data:/var/lib/postgresql/data
       - ollama_data:/root/.ollama
+      # Add cache and logs volumes for better performance
+      - faq_cache:/app/cache
+      - faq_logs:/app/logs
     environment:
       - FLASK_ENV=production
       - OLLAMA_HOST=0.0.0.0
+      - PYTHONHASHSEED=random
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4.0'
+        reservations:
+          memory: 4G
+          cpus: '2.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Increased start period for all services to initialize
     networks:
       - faq-bot-network
 
@@ -25,6 +50,10 @@ volumes:
   postgres_data:
     driver: local
   ollama_data:
+    driver: local
+  faq_cache:
+    driver: local
+  faq_logs:
     driver: local
 
 networks:

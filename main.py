@@ -37,8 +37,6 @@ from docx import Document as DocxReader
 import xml.etree.ElementTree as ET
 import psycopg2
 import psycopg2.extras
-import hashlib
-import secrets
 import re
 import json
 from datetime import datetime, timedelta
@@ -57,8 +55,8 @@ ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.csv', '.xml', '.xlsx'}
 add_backend_log("TEST LOG: Flask app started and logging is configured.")
 
 app = Flask(__name__)
-# Set secret key from environment variable or generate a secure random one
-app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)  # Needed for session support
+# Set secret key from environment variable or use a fixed key for shared user system
+app.secret_key = os.environ.get('SECRET_KEY') or 'shared_user_secret_key_2024'
 
 # AI App with lazy initialization and background building
 ai_app = None
@@ -69,7 +67,12 @@ ai_app_error = None
 # Session security settings
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)  # Longer sessions for shared users
+
+# Make sessions permanent by default for shared user system
+@app.before_request
+def make_session_permanent():
+    session.permanent = True
 
 # Database setup - PostgreSQL
 DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_history'
@@ -112,34 +115,26 @@ def start_progress_cleanup():
     cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
     cleanup_thread.start()
 
-def validate_email(email):
-    """Validate email format"""
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
-def validate_password(password):
-    """Validate password strength"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
-    if not re.search(r'[A-Z]', password):
-        return False, "Password must contain at least one uppercase letter"
-    if not re.search(r'[a-z]', password):
-        return False, "Password must contain at least one lowercase letter"
-    if not re.search(r'\d', password):
-        return False, "Password must contain at least one number"
-    return True, "Password is strong"
-
-def validate_username(username):
-    """Validate username format"""
-    if len(username) < 3:
-        return False, "Username must be at least 3 characters long"
-    if not re.match(r'^[a-zA-Z0-9_]+$', username):
-        return False, "Username can only contain letters, numbers, and underscores"
-    return True, "Username is valid"
-
 def get_db():
-    """Get database connection"""
-    return psycopg2.connect(DATABASE_URL)
+    """Get database connection with retry logic"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            return psycopg2.connect(DATABASE_URL)
+        except psycopg2.OperationalError as e:
+            if attempt < max_retries - 1:
+                print(f"⚠ Database connection attempt {attempt + 1} failed: {e}")
+                print(f"⚠ Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                print(f"❌ Database connection failed after {max_retries} attempts: {e}")
+                raise e
+        except Exception as e:
+            print(f"❌ Unexpected database error: {e}")
+            raise e
 
 def init_db():
     """Initialize the database with tables"""
@@ -157,11 +152,18 @@ def init_db():
         )
     ''')
     
+    # Create default shared user if it doesn't exist
+    cursor.execute('''
+        INSERT INTO users (username, email, password_hash) 
+        VALUES ('shared_user', 'shared@faqbot.com', 'default_hash')
+        ON CONFLICT (username) DO NOTHING
+    ''')
+    
     # Create chat_history table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER,
+            user_id INTEGER DEFAULT 1,
             session_id VARCHAR(255),
             question TEXT NOT NULL,
             answer TEXT NOT NULL,
@@ -207,51 +209,22 @@ def init_db():
     conn.commit()
     conn.close()
 
-def hash_password(password):
-    """Hash a password using SHA-256"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
 def get_user_id():
-    """Get current user ID from session"""
-    if 'user_id' in session:
-        return session['user_id']
-    return None
+    """Get current user ID - always returns shared user ID"""
+    return 1  # Always return the shared user ID
 
 def get_session_id():
-    """Get or create session ID for guest users"""
-    # For guest users (no user_id), always create a new session_id
-    # This ensures each guest visit gets a fresh session
-    if 'user_id' not in session:
-        # Clear any existing guest session data
-        if 'session_id' in session:
-            old_session_id = session['session_id']
-            # Clean up old guest session data from database
-            try:
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
-                conn.commit()
-                conn.close()
-                print(f"Cleaned up old guest session: {old_session_id}")
-            except Exception as e:
-                print(f"Error cleaning up old guest session: {e}")
-        
-        # Generate new session_id for this guest visit
-        session['session_id'] = secrets.token_urlsafe(32)
-        session['guest_visit_time'] = datetime.now().isoformat()
-        print(f"New guest session created: {session['session_id']}")
-    
-    # For logged-in users, maintain persistent session_id
-    elif 'session_id' not in session:
-        session['session_id'] = secrets.token_urlsafe(32)
-    
-    return session['session_id']
+    """Get or create session ID for the shared user"""
+    # Always use the same session ID for the shared user
+    if 'shared_session_id' not in session:
+        session['shared_session_id'] = 'shared_session_001'
+    return session['shared_session_id']
 
 def get_chat_history(limit=None, session_key=None):
-    """Get chat history from database for a given session_key"""
+    """Get chat history from database for the shared user"""
     conn = get_db()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    user_id = get_user_id()
+    user_id = get_user_id()  # Always returns 1 (shared user)
     order = 'ASC'
     limit_clause = ''
     if limit is not None:
@@ -259,61 +232,41 @@ def get_chat_history(limit=None, session_key=None):
     
     if session_key:
         # If session_key is provided, use it directly
-        # But ensure guest users can't access logged-in user data
-        if not user_id:
-            # Guest users can only access their own session data
-            cursor.execute(f'''
-                SELECT question, answer, confidence, sources FROM chat_history 
-                WHERE session_id = %s AND user_id IS NULL
-                ORDER BY timestamp {order} 
-                {limit_clause}
-            ''', (session_key,))
-        else:
-            # Logged-in users can access their own session data
-            cursor.execute(f'''
-                SELECT question, answer, confidence, sources FROM chat_history 
-                WHERE session_id = %s AND user_id = %s
-                ORDER BY timestamp {order} 
-                {limit_clause}
-            ''', (session_key, user_id))
-    elif user_id:
-        # For logged-in users, get their persistent chat history
         cursor.execute(f'''
-            SELECT question, answer, confidence, sources FROM chat_history 
+            SELECT question, answer, sources FROM chat_history 
+            WHERE session_id = %s AND user_id = %s
+            ORDER BY timestamp {order} 
+            {limit_clause}
+        ''', (session_key, user_id))
+    else:
+        # Get all chat history for the shared user
+        cursor.execute(f'''
+            SELECT question, answer, sources FROM chat_history 
             WHERE user_id = %s 
             ORDER BY timestamp {order} 
             {limit_clause}
         ''', (user_id,))
-    else:
-        # For guest users, get only current session data
-        session_id = get_session_id()
-        cursor.execute(f'''
-            SELECT question, answer, confidence, sources FROM chat_history 
-            WHERE session_id = %s AND user_id IS NULL
-            ORDER BY timestamp {order} 
-            {limit_clause}
-        ''', (session_id,))
     
     history = cursor.fetchall()
     conn.close()
     return [{
         'question': row['question'], 
         'answer': row['answer'],
-        'confidence': row['confidence'],
+        #'confidence': row['confidence'],
         'sources': row['sources']
     } for row in history]
 
-def save_chat_history(question, answer, confidence, sources, session_key=None):
-    """Save chat history to database with session_key"""
+def save_chat_history(question, answer, sources, session_key=None):
+    """Save chat history to database for the shared user"""
     conn = get_db()
     cursor = conn.cursor()
-    user_id = get_user_id()
+    user_id = get_user_id()  # Always returns 1 (shared user)
     session_id = session_key if session_key else get_session_id()
     
-    try:
-        confidence = float(confidence) if confidence is not None else None
-    except Exception:
-        confidence = None
+    #try:
+    #    confidence = float(confidence) if confidence is not None else None
+    #except Exception:
+    #    confidence = None
     
     # Handle structured source data
     if isinstance(sources, dict) and 'summary' in sources:
@@ -323,27 +276,33 @@ def save_chat_history(question, answer, confidence, sources, session_key=None):
         # Legacy string format
         sources_str = str(sources) if sources else 'N/A'
     
-    # For guest users, ensure we're using the current session_id
-    if not user_id and not session_key:
-        # Double-check we have the latest session_id for guests
-        current_session_id = get_session_id()
-        if current_session_id != session_id:
-            session_id = current_session_id
-            print(f"Updated guest session_id to: {session_id}")
-    
     cursor.execute('''
-        INSERT INTO chat_history (user_id, session_id, question, answer, confidence, sources)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    ''', (user_id, session_id, question, answer, confidence, sources_str))
+        INSERT INTO chat_history (user_id, session_id, question, answer, sources)
+        VALUES (%s, %s, %s, %s, %s)
+    ''', (user_id, session_id, question, answer, sources_str))
     conn.commit()
     conn.close()
 
-# Initialize database on startup
-init_db()
+# Initialize database on startup (handle failures gracefully)
+try:
+    init_db()
+    print("✓ Database initialized successfully")
+except Exception as e:
+    print(f"⚠ Database initialization failed: {e}")
+    print("⚠ Flask will start without database - some features may not work")
+    print("⚠ Database will be initialized when PostgreSQL becomes available")
 
 def get_or_init_ai_app():
     """Get AI app instance with lazy initialization"""
     global ai_app, ai_app_initializing, ai_app_ready, ai_app_error
+    
+    # Ensure AIApp is available in this scope
+    try:
+        from ai_bot import AIApp
+    except ImportError as e:
+        ai_app_error = f"Failed to import AIApp: {e}"
+        add_backend_log(f"Failed to import AIApp: {e}")
+        return None
     
     # If already ready, return it
     if ai_app_ready and ai_app is not None:
@@ -373,7 +332,6 @@ def get_or_init_ai_app():
     
     # Quick check: if database already exists and is valid, try to load it immediately
     try:
-        from ai_bot import AIApp
         temp_ai_app = AIApp(None)
         if temp_ai_app.database_exists_and_valid():
             add_backend_log("Database exists - attempting quick load...")
@@ -554,169 +512,66 @@ def ensure_ai_app_ready():
     
     return ai_app_ready
 
-def cleanup_old_guest_sessions():
-    """Clean up old guest sessions from database"""
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        
-        # Delete guest sessions older than 24 hours
-        cursor.execute('''
-            DELETE FROM chat_history 
-            WHERE user_id IS NULL 
-            AND timestamp < NOW() - INTERVAL '24 hours'
-        ''')
-        
-        deleted_count = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        if deleted_count > 0:
-            print(f"Cleaned up {deleted_count} old guest session records")
-            add_backend_log(f"Cleaned up {deleted_count} old guest session records")
-            
-    except Exception as e:
-        print(f"Error cleaning up old guest sessions: {e}")
-
 @app.route('/')
 def index():
-    # Clean up old guest sessions periodically
-    cleanup_old_guest_sessions()
-    
-    # For guest users, ensure they get a fresh session
-    if 'user_id' not in session:
-        # Clear any existing guest session data
-        if 'session_id' in session:
-            old_session_id = session['session_id']
-            # Clean up old guest session data from database
-            try:
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
-                conn.commit()
-                conn.close()
-                print(f"Cleaned up old guest session on page load: {old_session_id}")
-            except Exception as e:
-                print(f"Error cleaning up old guest session on page load: {e}")
-        
-        # Clear old session data and create new session_id
-        session.pop('session_id', None)
-        session.pop('guest_visit_time', None)
-        # New session_id will be created when get_session_id() is called
-        
-        # Configure session for guest user
-        configure_session_for_user()
+    # No guest session cleanup needed - all users are shared users
     
     return render_template('index.html')
 
-@app.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-    
-    if not username or not email or not password:
-        return jsonify({'error': 'All fields are required'})
-    
-    # Validate email format
-    if not validate_email(email):
-        return jsonify({'error': 'Please enter a valid email address'})
-    
-    # Validate password strength
-    password_valid, password_message = validate_password(password)
-    if not password_valid:
-        return jsonify({'error': password_message})
-    
-    # Validate username
-    username_valid, username_message = validate_username(username)
-    if not username_valid:
-        return jsonify({'error': username_message})
-    
-    conn = get_db()
-    cursor = conn.cursor()
-    
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint for Cloud Run"""
     try:
-        password_hash = hash_password(password)
-        
-        cursor.execute('''
-            INSERT INTO users (username, email, password_hash) 
-            VALUES (%s, %s, %s) RETURNING id
-        ''', (username, email, password_hash))
-        result = cursor.fetchone()
-        if result is None:
-            conn.close()
-            return jsonify({'error': 'Registration failed'})
-        user_id = result[0]
-        conn.commit()
-        
-        # Auto-login after registration
-        session['user_id'] = user_id
-        session['username'] = username
-        configure_session_for_user()  # Configure session for logged-in user
-        
-        conn.close()
-        add_backend_log(f"User registered: {username} ({email})")
+        # Basic health check - just return OK if Flask is running
         return jsonify({
-            'status': 'success', 
-            'message': 'Registration successful!'
-        })
-    except psycopg2.IntegrityError as e:
-        conn.close()
-        if 'username' in str(e):
-            return jsonify({'error': 'Username already exists'})
-        elif 'email' in str(e):
-            return jsonify({'error': 'Email already exists'})
-        else:
-            return jsonify({'error': 'Registration failed'})
+            'status': 'healthy',
+            'service': 'FAQ Bot',
+            'timestamp': datetime.now().isoformat(),
+            'flask': 'running'
+        }), 200
     except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/get_database_status')
+def get_database_status():
+    """Simple PostgreSQL health check endpoint for frontend monitoring"""
+    try:
+        # Test PostgreSQL connection
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Simple query to test connection
+        cursor.execute('SELECT 1')
+        cursor.fetchone()
+        
         conn.close()
-        add_backend_log(f"Registration error: {e}")
-        return jsonify({'error': 'An unexpected error occurred. Please try again later.'})
-
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    
-    if not username or not password:
-        return jsonify({'error': 'Username and password are required'})
-    
-    conn = get_db()
-    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    
-    cursor.execute('''
-        SELECT id, username, password_hash
-        FROM users WHERE username = %s
-    ''', (username,))
-    user = cursor.fetchone()
-    conn.close()
-    
-    if user and user['password_hash'] == hash_password(password):
-        session['user_id'] = user['id']
-        session['username'] = user['username']
-        configure_session_for_user()  # Configure session for logged-in user
-        add_backend_log(f"User logged in: {username}")
-        return jsonify({'status': 'success', 'message': 'Login successful'})
-    else:
-        return jsonify({'error': 'Invalid username or password'})
-
-@app.route('/logout', methods=['POST'])
-def logout():
-    session.pop('user_id', None)
-    session.pop('username', None)
-    configure_session_for_user()  # Configure session for guest user
-    return jsonify({'status': 'success', 'message': 'Logout successful'})
+        
+        return jsonify({
+            'status': 'connected',
+            'database': 'postgresql',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        add_backend_log(f"Database health check failed: {e}")
+        return jsonify({
+            'status': 'disconnected',
+            'database': 'postgresql',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/user_status', methods=['GET'])
 def user_status():
-    user_id = get_user_id()
-    username = session.get('username')
+    """Always return shared user status"""
     return jsonify({
-        'logged_in': user_id is not None,
-        'username': username,
-        'user_id': user_id
+        'logged_in': True,
+        'username': 'shared_user',
+        'user_id': 1
     })
 
 @app.route('/clear_history', methods=['POST'])
@@ -724,13 +579,9 @@ def clear_history():
     conn = get_db()
     cursor = conn.cursor()
     
-    user_id = get_user_id()
-    session_id = get_session_id()
+    user_id = get_user_id()  # Always returns 1 (shared user)
     
-    if user_id:
-        cursor.execute('DELETE FROM chat_history WHERE user_id = %s', (user_id,))
-    else:
-        cursor.execute('DELETE FROM chat_history WHERE session_id = %s', (session_id,))
+    cursor.execute('DELETE FROM chat_history WHERE user_id = %s', (user_id,))
     
     conn.commit()
     conn.close()
@@ -741,19 +592,12 @@ def export_history():
     conn = get_db()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     
-    user_id = get_user_id()
-    session_id = get_session_id()
+    user_id = get_user_id()  # Always returns 1 (shared user)
     
-    if user_id:
-        cursor.execute('''
-            SELECT question, answer, timestamp FROM chat_history 
-            WHERE user_id = %s ORDER BY timestamp
-        ''', (user_id,))
-    else:
-        cursor.execute('''
-            SELECT question, answer, timestamp FROM chat_history 
-            WHERE session_id = %s ORDER BY timestamp
-        ''', (session_id,))
+    cursor.execute('''
+        SELECT question, answer, timestamp FROM chat_history 
+        WHERE user_id = %s ORDER BY timestamp
+    ''', (user_id,))
     
     history = cursor.fetchall()
     conn.close()
@@ -859,6 +703,46 @@ def export_chat():
     result = ai_app.export_chat(chat_content)
     return jsonify({'status': 'success' if result else 'error'})
 
+@app.route('/ai_status', methods=['GET'])
+def get_ai_status():
+    """Get the current status of the AI Assistant"""
+    global ai_app, ai_app_ready, ai_app_initializing, ai_app_error
+    
+    if ai_app_error:
+        return jsonify({
+            'status': 'error',
+            'message': f'AI Assistant error: {ai_app_error}',
+            'ready': False
+        })
+    
+    if not ai_app_ready:
+        if ai_app_initializing:
+            return jsonify({
+                'status': 'initializing',
+                'message': 'AI Assistant is initializing in background...',
+                'ready': False
+            })
+        else:
+            return jsonify({
+                'status': 'not_started',
+                'message': 'AI Assistant has not been started yet',
+                'ready': False
+            })
+    
+    if not ai_app:
+        return jsonify({
+            'status': 'not_available',
+            'message': 'AI Assistant not available',
+            'ready': False
+        })
+    
+    return jsonify({
+        'status': 'ready',
+        'message': 'AI Assistant is ready',
+        'ready': True,
+        'has_database': ai_app.db is not None
+    })
+
 @app.route('/document_status', methods=['GET'])
 def get_document_status():
     global ai_app, ai_app_ready, ai_app_initializing, ai_app_error
@@ -950,7 +834,16 @@ def ask_question():
             return jsonify({'error': f'AI Assistant error: {ai_app_error}'})
         else:
             # Trigger initialization
-            ai_app = get_or_init_ai_app()
+            try:
+                ai_app = get_or_init_ai_app()
+                if ai_app:
+                    ai_app_ready = True
+                    ai_app_error = None
+                else:
+                    return jsonify({'error': 'AI Assistant initialization failed. Please try again later.'})
+            except Exception as e:
+                ai_app_error = str(e)
+                return jsonify({'error': f'AI Assistant initialization error: {e}'})
             return jsonify({'error': 'AI Assistant is starting up. Please wait a moment and try again.'})
     
     if not ai_app:
@@ -968,23 +861,7 @@ def ask_question():
     if not question:
         return jsonify({'error': 'Question is required'})
     
-    # Security check: ensure guest users can't access other users' data
-    user_id = get_user_id()
-    if not user_id and session_key:
-        # For guest users, validate that the session_key belongs to them
-        # and doesn't contain any logged-in user data
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT COUNT(*) FROM chat_history 
-            WHERE session_id = %s AND user_id IS NOT NULL
-        ''', (session_key,))
-        count = cursor.fetchone()[0]
-        conn.close()
-        
-        if count > 0:
-            # This session_key contains logged-in user data, reject the request
-            return jsonify({'error': 'Invalid session access'})
+    # Security check removed - no longer needed with shared user system
     
     chat_history = get_chat_history(session_key=session_key)
     
@@ -995,16 +872,67 @@ def ask_question():
         topic_ids = []
     # Otherwise, topic_ids is a list of selected topic IDs
     
-    result = ai_app.handle_question(question, chat_history=chat_history, topic_ids=topic_ids)
-    if 'error' in result:
-        return jsonify({'error': result['error']})
+    try:
+        result = ai_app.handle_question(question, chat_history=chat_history, topic_ids=topic_ids)
+        if 'error' in result:
+            return jsonify({'error': result['error']})
+        
+        save_chat_history(question, result['answer'], result['sources'], session_key=session_key)
+        return jsonify({
+            'answer': result['answer'],
+            #'confidence': result['confidence'],
+            'sources': result['sources']
+        })
+    except Exception as e:
+        ai_app_error = str(e)
+        return jsonify({'error': f'AI Assistant error: {e}'})
+
+@app.route('/update_document_topics', methods=['POST'])
+def update_document_topics():
+    """Update the topics associated with a document"""
+    global ai_app
     
-    save_chat_history(question, result['answer'], result['confidence'], result['sources'], session_key=session_key)
-    return jsonify({
-        'answer': result['answer'],
-        'confidence': result['confidence'],
-        'sources': result['sources']
-    })
+    if not ai_app:
+        return jsonify({'error': 'AI Assistant not initialized'})
+    
+    data = request.get_json()
+    filename = data.get('filename')
+    topic_ids = data.get('topic_ids', [])
+    
+    if not filename:
+        return jsonify({'error': 'Filename is required'})
+    
+    try:
+        # Update document topics in the database
+        result = ai_app.update_document_topics(filename, topic_ids)
+        
+        if result:
+            add_backend_log(f"Updated topics for document '{filename}' to: {topic_ids}")
+            
+            # Get the topic names for the frontend
+            topic_names = []
+            if topic_ids:
+                try:
+                    conn = psycopg2.connect(DATABASE_URL)
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT name FROM topics WHERE id = ANY(%s)', (topic_ids,))
+                    topic_names = [row[0] for row in cursor.fetchall()]
+                    conn.close()
+                except Exception as e:
+                    print(f"Error fetching topic names: {e}")
+            
+            return jsonify({
+                'status': 'success', 
+                'message': 'Document topics updated successfully',
+                'updated_topics': topic_names
+            })
+        else:
+            return jsonify({'error': 'Failed to update document topics'})
+            
+    except Exception as e:
+        error_msg = f"Error updating document topics: {str(e)}"
+        add_backend_log(error_msg)
+        return jsonify({'error': error_msg})
 
 @app.route('/upload_questions', methods=['POST'])
 def upload_questions():
@@ -1227,7 +1155,7 @@ def process_questions_parallel(questions, job_id):
                 results.append({
                     'question': question,
                     'answer': 'Processing timed out - question was too complex or system was overloaded',
-                    'confidence': 0,
+                    #'confidence': 0,
                     'sources': {'summary': 'Timeout occurred', 'detailed': 'Processing timed out'}
                 })
             except Exception as e:
@@ -1235,7 +1163,7 @@ def process_questions_parallel(questions, job_id):
                 results.append({
                     'question': question,
                     'answer': f'Error processing question: {str(e)}',
-                    'confidence': 0,
+                    #'confidence': 0,
                     'sources': {'summary': 'Error occurred', 'detailed': str(e)}
                 })
     
@@ -1262,7 +1190,7 @@ def process_single_question(question, index, job_id):
             return {
                 'question': question,
                 'answer': 'AI Assistant not properly initialized. Please upload documents first.',
-                'confidence': 0,
+                #'confidence': 0,
                 'sources': {'summary': 'AI not ready', 'detailed': 'AI Assistant not initialized'}
             }
         
@@ -1275,13 +1203,13 @@ def process_single_question(question, index, job_id):
             return {
                 'question': question,
                 'answer': f"Error: {result['error']}",
-                'confidence': 0,
+                #'confidence': 0,
                 'sources': {'summary': 'Error occurred', 'detailed': result['error']}
             }
         
         # Extract answer and sources
         answer = result.get('answer', 'No answer generated')
-        confidence = result.get('confidence', 0)
+        #confidence = result.get('confidence', 0)
         sources = result.get('sources', {})
         
         if isinstance(sources, dict):
@@ -1293,7 +1221,7 @@ def process_single_question(question, index, job_id):
         
         # Save to database
         try:
-            save_chat_history(question, answer, confidence, sources_for_db)
+            save_chat_history(question, answer, sources_for_db)
         except Exception as e:
             add_backend_log(f"Warning: Could not save question {index+1} to database: {e}")
         
@@ -1305,7 +1233,7 @@ def process_single_question(question, index, job_id):
         return {
             'question': question,  # Keep original question for display
             'answer': answer,
-            'confidence': confidence,
+            #'confidence': confidence,
             'sources': sources_data
         }
         
@@ -1314,7 +1242,7 @@ def process_single_question(question, index, job_id):
         return {
             'question': question,
             'answer': f'Error processing question: {str(e)}',
-            'confidence': 0,
+            #'confidence': 0,
             'sources': {'summary': 'Error occurred', 'detailed': str(e)}
         }
 
@@ -1324,7 +1252,7 @@ def generate_questionnaire_results(results, filename, job_id):
         # Generate CSV
         output = io.StringIO()
         writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Question', 'Answer', 'Source', 'Confidence'])
+        writer.writerow(['Question', 'Answer', 'Source'])
         
         for row in results:
             try:
@@ -1339,12 +1267,12 @@ def generate_questionnaire_results(results, filename, job_id):
                 question = str(row['question']).encode('utf-8', errors='ignore').decode('utf-8')
                 answer = clean_answer.encode('utf-8', errors='ignore').decode('utf-8')
                 source = sources_str.encode('utf-8', errors='ignore').decode('utf-8')
-                confidence = str(row['confidence'])
+                #confidence = str(row['confidence'])
                 
-                writer.writerow([question, answer, source, confidence])
+                writer.writerow([question, answer, source])
             except Exception as row_error:
                 add_backend_log(f"Error writing CSV row: {row_error}")
-                writer.writerow(['Error processing question', 'Error processing answer', 'N/A', '0'])
+                writer.writerow(['Error processing question', 'Error processing answer', 'N/A'])
         
         output.seek(0)
         
@@ -1369,7 +1297,7 @@ def generate_questionnaire_results(results, filename, job_id):
         return jsonify({
             'questions': [r['question'] for r in results],
             'answers': [r['answer'] for r in results],
-            'confidences': [r['confidence'] for r in results],
+            #'confidences': [r['confidence'] for r in results],
             'sources': [r['sources'] for r in results],
             'csv_id': unique_id,
             'filename': csv_filename,
@@ -1400,7 +1328,7 @@ def get_questionnaire_results(job_id):
         # Generate CSV info
         output = io.StringIO()
         writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Question', 'Answer', 'Source', 'Confidence'])
+        writer.writerow(['Question', 'Answer', 'Source'])
         
         for row in results:
             try:
@@ -1415,12 +1343,12 @@ def get_questionnaire_results(job_id):
                 question = str(row['question']).encode('utf-8', errors='ignore').decode('utf-8')
                 answer = clean_answer.encode('utf-8', errors='ignore').decode('utf-8')
                 source = sources_str.encode('utf-8', errors='ignore').decode('utf-8')
-                confidence = str(row['confidence'])
+                #confidence = str(row['confidence'])
                 
-                writer.writerow([question, answer, source, confidence])
+                writer.writerow([question, answer, source])
             except Exception as row_error:
                 add_backend_log(f"Error writing CSV row: {row_error}")
-                writer.writerow(['Error processing question', 'Error processing answer', 'N/A', '0'])
+                writer.writerow(['Error processing question', 'Error processing answer', 'N/A'])
         
         output.seek(0)
         
@@ -1443,7 +1371,7 @@ def get_questionnaire_results(job_id):
         return jsonify({
             'questions': [r['question'] for r in results],
             'answers': [r['answer'] for r in results],
-            'confidences': [r['confidence'] for r in results],
+            #'confidences': [r['confidence'] for r in results],
             'sources': [r['sources'] for r in results],
             'csv_id': unique_id,
             'filename': csv_filename,
@@ -2894,6 +2822,48 @@ def force_cleanup_and_rebuild():
         add_backend_log(f"Error in force cleanup and rebuild: {e}")
         return jsonify({'error': str(e)})
 
+@app.route('/check_database_integrity', methods=['POST'])
+def check_database_integrity():
+    """Manually check database integrity without forcing a rebuild."""
+    try:
+        global ai_app
+        if not ai_app:
+            return jsonify({'error': 'AI application not initialized'}), 500
+        
+        add_backend_log("Starting manual database integrity check...")
+        
+        # Run the smart integrity check
+        result = ai_app.periodic_integrity_check()
+        
+        status = result.get('status', 'unknown')
+        message = result.get('message', 'Unknown status')
+        
+        if status == 'valid':
+            add_backend_log(f"✅ Database integrity check: {message}")
+        elif status == 'minor_issues':
+            add_backend_log(f"⚠️ Database integrity check: {message}")
+        elif status == 'moderate_issues':
+            add_backend_log(f"⚠️ Database integrity check: {message}")
+        elif status == 'fixed':
+            add_backend_log(f"🔧 Database integrity check: {message}")
+        elif status == 'rebuilt':
+            add_backend_log(f"🔄 Database integrity check: {message}")
+        elif status == 'skipped':
+            add_backend_log(f"⏭️ Database integrity check: {message}")
+        else:
+            add_backend_log(f"❓ Database integrity check: {message}")
+        
+        return jsonify({
+            'success': True,
+            'status': status,
+            'message': message,
+            'details': result
+        })
+        
+    except Exception as e:
+        add_backend_log(f"Error in database integrity check: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/check_database_status', methods=['GET'])
 def check_database_status():
     """Check the current status of both PostgreSQL and vector databases."""
@@ -2970,60 +2940,9 @@ def check_database_status():
         add_backend_log(f"Error checking database status: {e}")
         return jsonify({'error': str(e)})
 
-@app.route('/clear_guest_session', methods=['POST'])
-def clear_guest_session():
-    """Clear guest session data and create a fresh session"""
-    if 'user_id' not in session:  # Only for guest users
-        old_session_id = session.get('session_id')
-        if old_session_id:
-            # Clean up old guest session data from database
-            try:
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (old_session_id,))
-                conn.commit()
-                conn.close()
-                print(f"Cleaned up old guest session: {old_session_id}")
-            except Exception as e:
-                print(f"Error cleaning up old guest session: {e}")
-        
-        # Clear session data and create new session_id
-        session.pop('session_id', None)
-        session.pop('guest_visit_time', None)
-        new_session_id = get_session_id()
-        
-        return jsonify({
-            'status': 'success', 
-            'message': 'Guest session cleared and refreshed',
-            'new_session_id': new_session_id
-        })
-    
-    return jsonify({'status': 'error', 'message': 'This endpoint is only for guest users'})
+# Guest session cleanup route removed - no longer needed with shared user system
 
-@app.route('/clear_guest_session_on_exit', methods=['POST'])
-def clear_guest_session_on_exit():
-    """Clear guest session data when user navigates away or closes browser"""
-    if 'user_id' not in session:  # Only for guest users
-        session_id = session.get('session_id')
-        if session_id:
-            # Clean up guest session data from database
-            try:
-                conn = get_db()
-                cursor = conn.cursor()
-                cursor.execute('DELETE FROM chat_history WHERE session_id = %s AND user_id IS NULL', (session_id,))
-                conn.commit()
-                conn.close()
-                print(f"Cleaned up guest session on exit: {session_id}")
-            except Exception as e:
-                print(f"Error cleaning up guest session on exit: {e}")
-        
-        # Clear session data
-        session.pop('session_id', None)
-        session.pop('guest_visit_time', None)
-        
-        return jsonify({'status': 'success', 'message': 'Guest session cleared'})
-    
-    return jsonify({'status': 'error', 'message': 'This endpoint is only for guest users'})
+# Guest session cleanup route removed - no longer needed with shared user system
 
 # Clean up old progress entries every hour
 def schedule_cleanup_tasks():
@@ -3033,7 +2952,6 @@ def schedule_cleanup_tasks():
             try:
                 time.sleep(3600)  # Run every hour
                 cleanup_old_progress()
-                cleanup_old_guest_sessions()
             except Exception as e:
                 print(f"Error in cleanup task: {e}")
     
@@ -3044,16 +2962,7 @@ def schedule_cleanup_tasks():
 # Start cleanup tasks
 schedule_cleanup_tasks()
 
-def configure_session_for_user():
-    """Configure session settings based on user type"""
-    if 'user_id' in session:
-        # Logged-in users get longer sessions
-        app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
-        session.permanent = True
-    else:
-        # Guest users get very short sessions
-        app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
-        session.permanent = False
+# configure_session_for_user function removed - no longer needed with shared user system
 
 if __name__ == '__main__':
     print('Flask app starting...')
@@ -3061,5 +2970,18 @@ if __name__ == '__main__':
     # Start background progress cleanup
     start_progress_cleanup()
     
+    # Initialize AI App before starting Flask
+    print('Initializing AI App...')
+    try:
+        ai_app = get_or_init_ai_app()
+        if ai_app:
+            print('✓ AI App initialized successfully')
+        else:
+            print('⚠ AI App initialization failed, will retry on first request')
+    except Exception as e:
+        print(f'⚠ AI App initialization error: {e}, will retry on first request')
+    
     # Start the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Get port from environment variable (Cloud Run) or default to 5000
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)

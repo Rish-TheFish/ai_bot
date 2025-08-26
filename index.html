@@ -132,9 +132,61 @@
             border-radius: 15px;
             padding: 30px;
             text-align: center;
-            background: #f8f9fa;
-            cursor: pointer;
-            margin: 20px 0;
+        }
+        
+        .editable-topics {
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        
+        .editable-topics:hover {
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .editable-topics:active {
+            background-color: #e9ecef;
+            transform: translateY(1px);
+        }
+        
+        .topics-container {
+            padding: 4px;
+            border-radius: 4px;
+        }
+        
+        .topics-container:hover {
+            background-color: #f8f9fa;
+        }
+        
+        /* Enhanced tooltip styling */
+        .editable-topics[title]:hover::after {
+            content: attr(title);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+            z-index: 1000;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            pointer-events: none;
+        }
+        
+        .editable-topics[title]:hover::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #333;
+            z-index: 1000;
+            pointer-events: none;
         }
         .file-upload-area:hover {
             border-color: #B0E0E6;
@@ -322,6 +374,259 @@
             /* Removed height restriction to show full AI responses */
             overflow: visible;
         }
+        
+        /* IDK Highlighting Styles */
+        .idk-highlight {
+            font-size: 1.3rem !important;
+            font-weight: bold !important;
+            color: #d32f2f !important;
+            background-color: rgba(211, 47, 47, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 2px solid #d32f2f;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* IDK Alert Modal */
+        .idk-alert-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff;
+            border: 3px solid #d32f2f;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            z-index: 9999;
+            max-width: 400px;
+            text-align: center;
+            animation: idkAlertPulse 0.5s ease-in-out;
+        }
+        
+        .idk-alert-modal h3 {
+            color: #d32f2f;
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+        
+        .idk-alert-modal p {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.1rem;
+        }
+        
+        .idk-alert-modal button {
+            /* Default button styling removed - now using specific button classes */
+        }
+        
+        .idk-alert-modal button:hover {
+            background: #b71c1c;
+        }
+        
+        .idk-alert-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        
+        .idk-alert-modal .btn-details {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .idk-alert-modal .btn-details:hover {
+            background: #1976d2;
+        }
+        
+        .idk-alert-modal .btn-acknowledge {
+            background: #d32f2f;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        .idk-alert-modal .btn-acknowledge:hover {
+            background: #b71c1c;
+        }
+        
+        /* IDK Details Modal */
+        .idk-details-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .idk-details-content {
+            background: #fff;
+            border-radius: 15px;
+            padding: 25px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .idk-details-content h4 {
+            color: #2196f3;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .question-text {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 1.1rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+        
+        .idk-details-content .btn-close {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-top: 15px;
+            width: 100%;
+        }
+        
+        .idk-details-content .btn-close:hover {
+            background: #555;
+        }
+        
+        /* Questions List Styling */
+        .questions-list {
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 20px 0;
+        }
+        
+        .question-item {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .question-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .question-number {
+            background: #007bff;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+        
+        .question-time {
+            color: #6c757d;
+            font-size: 0.85rem;
+        }
+        
+        .question-text {
+            background: #e9ecef;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 10px 0;
+            font-size: 1rem;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        
+        .ai-response {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #856404;
+            font-style: italic;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .btn-clear {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+            flex: 1;
+        }
+        
+        .btn-clear:hover {
+            background: #c82333;
+        }
+        
+        .btn-close {
+            background: #666;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+            flex: 1;
+        }
+        
+        @keyframes idkAlertPulse {
+            0% { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+            50% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+        
+        .idk-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 9998;
+        }
     </style>
 </head>
 <body>
@@ -340,7 +645,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="d-flex align-items-end justify-content-between" style="height: 32px;">
+                <div class="d-flex align-items-end justify-content-between" style="height: 40px;">
                     <div class="btn-group" role="group" style="margin-left: 0;">
                         <button type="button" class="btn btn-toggle-chat active" id="chatTabBtn">
                             
@@ -353,11 +658,17 @@
                             <i class="fas fa-folder-open"></i> Docs
                         </button>
                     </div>
-                    <div class="d-flex align-items-center">
-                        <span id="userStatusText2" style="font-size: 1em; font-weight: 500; color: white;">Guest User</span>
-                        <button class="btn btn-sm btn-outline-light ms-2" id="loginBtn2" style="font-size: 1em; font-weight: 500;">Login</button>
-                        <button class="btn btn-sm btn-outline-light ms-1" id="registerBtn2" style="font-size: 1em; font-weight: 500;">Register</button>
-                        <button class="btn btn-sm btn-outline-light ms-1 hidden" id="logoutBtn2" style="font-size: 1em; font-weight: 500;">Logout</button>
+                    <div class="d-flex align-items-center justify-content-center flex-grow-1">
+                        <div class="dropdown" style="position: relative; margin-left: -215px;">
+                            <button class="btn btn-outline-light dropdown-toggle" type="button" id="chatTopicsDropdownBtn" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 1.1em; padding: 8px 20px; height: 32px; line-height: 1; min-width: 160px;">
+                                <i class="fas fa-tags me-2"></i> All Topics
+                            </button>
+                            <ul class="dropdown-menu" id="chatTopicsDropdownMenu" style="max-height: 300px; overflow-y: auto; min-width: 280px; position: absolute; left: 0; right: auto;"></ul>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center" style="min-width: 120px;">
+                        <span id="userStatusText2" style="font-size: 1em; font-weight: 500; color: white;">Shared User</span>
+                        <!-- Login/Register buttons removed - no longer needed with shared user system -->
                     </div>
                 </div>
             </div>
@@ -396,6 +707,177 @@
             .chat-area, .logsArea {
                 border-top-left-radius: 0;
                 border-top-right-radius: 0;
+            }
+            
+            /* Header topic selector styling */
+            .header .dropdown .btn-outline-light {
+                border-color: rgba(255, 255, 255, 0.3);
+                color: white;
+                background: transparent;
+                transition: all 0.2s ease;
+                font-weight: 500;
+            }
+            
+            .header .dropdown .btn-outline-light:hover {
+                border-color: rgba(255, 255, 255, 0.6);
+                background: rgba(255, 255, 255, 0.1);
+                color: white;
+            }
+            
+            .header .dropdown .btn-outline-light:focus,
+            .header .dropdown .btn-outline-light.show {
+                border-color: rgba(255, 255, 255, 0.8);
+                background: rgba(255, 255, 255, 0.15);
+                color: white;
+                box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.25);
+            }
+            
+            .header .dropdown-menu {
+                border: none;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                border-radius: 8px;
+                z-index: 1000;
+                margin-top: 5px;
+                overflow: visible;
+                min-width: 280px !important;
+            }
+            
+            /* Ensure dropdown positioning works correctly in header */
+            .header .dropdown {
+                position: relative;
+            }
+            
+            .header .dropdown-menu.show {
+                display: block;
+                transform: none !important;
+            }
+            
+            /* Center the topic selector properly */
+            .header .d-flex.justify-content-center {
+                position: relative;
+                overflow: visible;
+            }
+            
+            /* Ensure dropdown container doesn't clip content */
+            .header .dropdown {
+                overflow: visible;
+            }
+            
+            /* Prevent any clipping of dropdown content */
+            .header {
+                overflow: visible;
+            }
+            
+            .main-container {
+                overflow: visible;
+            }
+            
+            .container-fluid {
+                overflow: visible;
+            }
+            
+            .header .dropdown-menu {
+                text-align: left;
+                min-width: 220px !important;
+                max-width: 280px;
+            }
+            
+            /* Style the dropdown menu items */
+            .header .dropdown-menu .form-check {
+                text-align: left;
+                padding: 8px 20px 8px 30px;
+                margin: 0;
+                border-bottom: 1px solid #f8f9fa;
+                white-space: nowrap;
+                min-width: 280px;
+            }
+            
+            .header .dropdown-menu .form-check:last-child {
+                border-bottom: none;
+            }
+            
+            .header .dropdown-menu .form-check-input {
+                margin-right: 8px;
+                flex-shrink: 0;
+            }
+            
+            .header .dropdown-menu .form-check-label {
+                cursor: pointer;
+                user-select: none;
+                font-size: 0.95em;
+                flex-grow: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            
+            /* Responsive adjustments for smaller screens */
+            @media (max-width: 768px) {
+                .header .dropdown .btn {
+                    font-size: 1em !important;
+                    padding: 6px 16px !important;
+                    min-width: 140px !important;
+                }
+                
+                .header .dropdown-menu {
+                    min-width: 200px;
+                }
+                
+                .header .d-flex.justify-content-center {
+                    order: 2;
+                }
+                
+                .header .btn-group {
+                    order: 1;
+                }
+                
+                .header .d-flex.align-items-center:last-child {
+                    order: 3;
+                }
+            }
+            
+            /* Clear History Modal Styling */
+            #clearHistoryModal .modal-body {
+                max-height: 70vh;
+                overflow-y: auto;
+            }
+            
+            #clearHistoryModal .form-check {
+                margin-bottom: 8px;
+                padding: 8px 12px;
+                border-radius: 6px;
+                transition: background-color 0.2s;
+            }
+            
+            #clearHistoryModal .form-check:hover {
+                background-color: #f8f9fa;
+            }
+            
+            #clearHistoryModal .form-check-input:checked + .form-check-label {
+                font-weight: 600;
+                color: #dc3545;
+            }
+            
+            #clearHistoryModal .btn-outline-secondary {
+                border-color: #6c757d;
+                color: #6c757d;
+            }
+            
+            #clearHistoryModal .btn-outline-secondary:hover {
+                background-color: #6c757d;
+                border-color: #6c757d;
+                color: white;
+            }
+            
+            #clearHistoryModal .badge {
+                font-size: 0.75em;
+                padding: 2px 6px;
+            }
+            
+            #clearHistoryModal .form-check-label {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                width: 100%;
             }
             </style>
             <!-- Welcome message above status, left-aligned -->
@@ -454,7 +936,7 @@
                             <th>Topics <span class="sort-arrow" data-col="topics" style="cursor:pointer;">▼</span></th>
                             <th>Type <span class="sort-arrow" data-col="type" style="cursor:pointer;">▼</span></th>
                             <th>Uploaded <span class="sort-arrow" data-col="uploaded" style="cursor:pointer;">▼</span></th>
-                            <th style="width: 120px;">Actions</th>
+                            <th style="width: 120px;">Rename</th>
                         </tr>
                     </thead>
                     <tbody id="docsTableBody">
@@ -643,17 +1125,83 @@
                      </div>
                  </div>
              </div>
+             
+             <!-- Edit Document Topics Modal -->
+             <div class="modal fade" id="editTopicsModal" tabindex="-1">
+                 <div class="modal-dialog">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <h5 class="modal-title"><i class="fas fa-tags"></i> Edit Document Topics</h5>
+                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                         </div>
+                         <div class="modal-body">
+                             <p><strong>Document:</strong> <span id="editTopicsDocName"></span></p>
+                             <p class="text-muted">Select the topics this document should be associated with:</p>
+                             <div id="editTopicsCheckboxes" class="mb-3">
+                                 <!-- Topic checkboxes will be populated here -->
+                             </div>
+                         </div>
+                         <div class="modal-footer">
+                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                             <button type="button" class="btn btn-primary" id="saveTopicsBtn">Save Changes</button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             
+             <!-- Clear History Modal -->
+             <div class="modal fade" id="clearHistoryModal" tabindex="-1">
+                 <div class="modal-dialog modal-lg">
+                     <div class="modal-content">
+                         <div class="modal-header">
+                             <h5 class="modal-title text-danger"><i class="fas fa-trash"></i> Clear Chat History</h5>
+                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                         </div>
+                         <div class="modal-body">
+                             <div class="alert alert-warning">
+                                 <i class="fas fa-exclamation-triangle"></i>
+                                 <strong>Warning:</strong> This action cannot be undone. Selected chat histories will be permanently deleted.
+                             </div>
+                             <div class="alert alert-info">
+                                 <i class="fas fa-info-circle"></i>
+                                 <strong>Note:</strong> This will clear chat history for the selected topic combinations. Individual topics and their combinations are stored separately in the database.
+                             </div>
+                             <p class="mb-3">Select which topic combinations to clear:</p>
+                             <div class="row">
+                                 <div class="col-md-6">
+                                     <h6>Individual Topics:</h6>
+                                     <div id="individualTopicsCheckboxes" class="mb-3">
+                                         <!-- Individual topic checkboxes will be populated here -->
+                                     </div>
+                                 </div>
+                                 <div class="col-md-6">
+                                     <h6>Topic Combinations:</h6>
+                                     <div id="combinationTopicsCheckboxes" class="mb-3">
+                                         <!-- Topic combination checkboxes will be populated here -->
+                                     </div>
+                                 </div>
+                             </div>
+                             <div class="mt-3">
+                                 <button type="button" class="btn btn-outline-secondary btn-sm" id="selectAllTopicsBtn">
+                                     <i class="fas fa-check-square"></i> Select All
+                                 </button>
+                                 <button type="button" class="btn btn-outline-secondary btn-sm ms-2" id="deselectAllTopicsBtn">
+                                     <i class="fas fa-square"></i> Deselect All
+                                 </button>
+                             </div>
+                         </div>
+                         <div class="modal-footer">
+                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                             <button type="button" class="btn btn-danger" id="confirmClearHistoryBtn" disabled>
+                                 <i class="fas fa-trash"></i> Clear Selected Histories
+                             </button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
             <div class="input-area">
                 <div class="row mb-3 justify-content-center">
-                    <div class="col-md-2 d-flex align-items-center">
-                        <div class="dropdown w-100">
-                            <button class="btn btn-outline-primary dropdown-toggle w-100" type="button" id="chatTopicsDropdownBtn" data-bs-toggle="dropdown" aria-expanded="false">
-                                All Topics
-                            </button>
-                            <ul class="dropdown-menu w-100" id="chatTopicsDropdownMenu" style="max-height: 300px; overflow-y: auto;"></ul>
-                        </div>
-                    </div>
-                    <div class="col-md-7 d-flex">
+                    <div class="col-md-8 d-flex">
                         <input type="text" class="form-control flex-grow-1" id="questionInput" placeholder="Ask your compliance question..." disabled>
                         <button class="btn btn-custom ms-2" id="askButton" disabled>
                             <i class="fas fa-paper-plane"></i>
@@ -673,12 +1221,17 @@
                     </div> -->
                     <div class="col-md-2 d-flex justify-content-center">
                         <button class="btn btn-outline-info w-100" id="batchQnAButton" disabled>
-    <i class="fas fa-question-circle"></i> Upload Questionnaire (No Topics)
+                    <i class="fas fa-question-circle"></i> Upload Questionnaire
 </button>
                     </div>
                     <div class="col-md-2 d-flex justify-content-center">
                         <button class="btn btn-outline-danger w-100" id="clearHistoryBtn">
                             <i class="fas fa-trash"></i> Clear History
+                        </button>
+                    </div>
+                    <div class="col-md-2 d-flex justify-content-center">
+                        <button class="btn btn-outline-info w-100" id="checkIntegrityBtn">
+                            <i class="fas fa-shield-alt"></i> Check Integrity
                         </button>
                     </div>
                 </div>
@@ -695,6 +1248,8 @@
                     <div id="batchQnAFileName" class="mt-2"></div>
                     <button class="btn btn-primary mt-2" id="batchQnAUploadBtn" disabled>Upload & Get Answers</button>
                     <button class="btn btn-secondary mt-2 ms-2" id="cancelBatchQnABtn">Cancel</button>
+                    
+
                 </div>
                 <!-- Loading Spinner -->
                 <div id="batchQnALoading" class="loading-overlay" style="display:none;">
@@ -707,65 +1262,9 @@
         </div>
     </div>
     
-    <!-- Login Modal -->
-    <div class="modal fade" id="loginModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Login</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="loginForm">
-                        <div class="mb-3">
-                            <label for="loginUsername" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="loginUsername" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="loginPassword" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="loginPassword" required>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="loginSubmitBtn">Login</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Login Modal removed - no longer needed with shared user system -->
     
-    <!-- Register Modal -->
-    <div class="modal fade" id="registerModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Register</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="registerForm">
-                        <div class="mb-3">
-                            <label for="registerUsername" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="registerUsername" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="registerEmail" class="form-label">Email</label>
-                            <input type="email" class="form-control" id="registerEmail" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="registerPassword" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="registerPassword" required>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="registerSubmitBtn">Register</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- Register Modal removed - no longer needed with shared user system -->
     
     <!-- Upload Animation -->
     <!-- <div id="uploadAnimation" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%, -50%); z-index:2000; pointer-events:none;">
@@ -846,10 +1345,7 @@ window.addEventListener('DOMContentLoaded', function() {
             const btn = document.getElementById('chatTopicsDropdownBtn');
             if (!menu || !btn) return;
             menu.innerHTML = '';
-            // No Topics option (checkbox)
-            const noneLi = document.createElement('li');
-            noneLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="none" id="chatTopic_none"><label class="form-check-label" for="chatTopic_none">No Topics</label></div>`;
-            menu.appendChild(noneLi);
+                    // All Topics is now the default
             // All Topics option (checkbox)
             const allLi = document.createElement('li');
             allLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chatTopic_all"><label class="form-check-label" for="chatTopic_all">All Topics</label></div>`;
@@ -863,60 +1359,70 @@ window.addEventListener('DOMContentLoaded', function() {
             // Selection logic
             function updateBtnLabel() {
                 const checked = menu.querySelectorAll('.form-check-input:checked');
-                if (checked.length === 0 || (checked.length === 1 && checked[0].value === 'none')) {
-                    btn.textContent = 'No Topics';
-                } else if (checked.length > 0 && Array.from(checked).some(cb => cb.value === 'all')) {
+                if (checked.length === 0 || (checked.length === 1 && checked[0].value === 'all')) {
                     btn.textContent = 'All Topics';
                 } else {
-                    const names = Array.from(checked).filter(cb => cb.value !== 'all' && cb.value !== 'none').map(cb => menu.querySelector(`label[for=\"chatTopic_${cb.value}\"]`).textContent);
-                    btn.textContent = names.length > 0 ? names.join(', ') : 'No Topics';
+                    const names = Array.from(checked).filter(cb => cb.value !== 'all').map(cb => menu.querySelector(`label[for="chatTopic_${cb.value}"]`).textContent);
+                    btn.textContent = names.length > 0 ? names.join(', ') : 'All Topics';
                 }
             }
-            menu.addEventListener('change', function(e) {
-                if (!e.target.classList.contains('form-check-input')) return;
-                if (e.target.value === 'all' && e.target.checked) {
-                    // Check all topic checkboxes except 'none'
-                    menu.querySelectorAll('.form-check-input').forEach(cb => {
-                        if (cb.value !== 'none') cb.checked = true;
-                        if (cb.value === 'none') cb.checked = false;
-                    });
-                } else if (e.target.value === 'none' && e.target.checked) {
-                    // Uncheck all others
-                    menu.querySelectorAll('.form-check-input').forEach(cb => {
-                        if (cb.value !== 'none') cb.checked = false;
-                    });
-                } else {
-                    // If any topic or 'all' is checked, uncheck 'none'
-                    if (e.target.checked) {
-                        menu.querySelector('.form-check-input[value="none"]').checked = false;
-                    }
-                    // If all topics (not 'all' or 'none') are checked, check 'all'
-                    const topicCheckboxes = Array.from(menu.querySelectorAll('.form-check-input')).filter(cb => cb.value !== 'all' && cb.value !== 'none');
-                    const allChecked = topicCheckboxes.every(cb => cb.checked);
-                    menu.querySelector('.form-check-input[value="all"]').checked = allChecked;
-                    // If not all topics are checked, uncheck 'all'
-                    if (!allChecked) {
-                        menu.querySelector('.form-check-input[value="all"]').checked = false;
-                    }
-                }
-                updateBtnLabel();
-                // Also update the Upload Questionnaire button
-                updateUploadQuestionnaireButton();
-            });
-            // Set initial state: No Topics checked
-            menu.querySelector('.form-check-input[value="none"]').checked = true;
+            
+            // Make updateBtnLabel globally accessible
+            window.updateBtnLabel = updateBtnLabel;
+            // Note: Event handling is now done in attachChatTopicsDropdownHandler()
+            // This prevents duplicate event handlers and ensures proper chat history management
+            
+            // Set initial state: All Topics checked (default) and ensure it's the only selection
+            // This ensures that every time the page loads, "All Topics" is the default selection
+            const allCheckbox = menu.querySelector('.form-check-input[value="all"]');
+            if (allCheckbox) {
+                allCheckbox.checked = true;
+                // Uncheck all other topics to ensure only All Topics is selected
+                const otherCheckboxes = menu.querySelectorAll('.form-check-input:not([value="all"])');
+                otherCheckboxes.forEach(cb => cb.checked = false);
+            }
+            
             updateBtnLabel();
             // Update the Upload Questionnaire button initially
             updateUploadQuestionnaireButton();
             attachChatTopicsDropdownHandler && attachChatTopicsDropdownHandler();
         });
-    // On DOMContentLoaded, also enforce chat bar state
+    // On DOMContentLoaded, also enforce chat bar state and ensure All Topics is default
     document.addEventListener('DOMContentLoaded', function() {
-        const menu = document.getElementById('chatTopicsDropdownMenu');
-        if (menu) {
-            const checked = menu.querySelectorAll('.form-check-input:checked');
-            setChatBarEnabled(!(checked.length === 0 || checked[0].value === 'all'));
-        }
+        // Ensure All Topics is always selected by default on page load
+        setTimeout(() => {
+            const menu = document.getElementById('chatTopicsDropdownMenu');
+            if (menu) {
+                const allCheckbox = menu.querySelector('.form-check-input[value="all"]');
+                if (allCheckbox) {
+                    allCheckbox.checked = true;
+                    // Uncheck all other topics
+                    const otherCheckboxes = menu.querySelectorAll('.form-check-input:not([value="all"])');
+                    otherCheckboxes.forEach(cb => cb.checked = false);
+                }
+            }
+            
+            // Update selected topics to reflect All Topics selection
+            selectedTopics = new Set(['all']);
+            currentChatSessionKey = 'topics:all';
+            
+            // Update button label and chat input state
+            if (window.updateBtnLabel) updateBtnLabel();
+            updateChatInputState();
+            
+            // Also update the Upload Questionnaire button state
+            if (window.updateUploadQuestionnaireButton) updateUploadQuestionnaireButton();
+            
+            // Ensure the button text shows "All Topics"
+            const btn = document.getElementById('chatTopicsDropdownBtn');
+            if (btn) btn.textContent = 'All Topics';
+            
+            // Add a log message to show that All Topics is the default
+            addLogMessage('✅ All Topics selected by default - Chat is now enabled');
+            
+            // Load initial chat history for All Topics session
+            fetchChatHistory(currentChatSessionKey);
+        }, 100);
     });
     // --- Per-topic-selection chat session logic ---
     function getChatSessionKey(selectedTopics) {
@@ -932,8 +1438,13 @@ window.addEventListener('DOMContentLoaded', function() {
     let chatHistories = {}; // sessionKey -> array of {question, answer}
 
     function displayChatHistory(sessionKey) {
+        console.log(`[DEBUG] Displaying chat history for session: ${sessionKey}`);
+        console.log(`[DEBUG] Available chat histories:`, Object.keys(chatHistories));
+        console.log(`[DEBUG] History for this session:`, chatHistories[sessionKey]);
+        
         const chatMessages = document.getElementById('chatMessages');
         chatMessages.innerHTML = '';
+        
         // Show the initial AI welcome message with topic name(s)
         const menu = document.getElementById('chatTopicsDropdownMenu');
         let topicLabel = 'All Topics';
@@ -949,27 +1460,36 @@ window.addEventListener('DOMContentLoaded', function() {
                 isAllTopics = false;
             }
         }
-        // System message: prompt to select topics if none selected
-        if (isAllTopics) {
-            addMessage(`🤖 AI Assistant: <b>Welcome!</b> Please <b>select your topic(s)</b> to get started. The chat bar will be enabled once you choose at least one topic.`, 'ai');
-        } else {
-            addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai');
-        }
+        
+                    // Welcome message - All Topics is now the default
+            addMessage(`🤖 AI Assistant: Welcome! I'm your DP AI Assistant. <br><b>Current Topic(s):</b> ${topicLabel}<br>Please upload compliance documents or ask a question to get started.`, 'ai', false);
+        
+        // Check if we have history for this session
         const history = chatHistories[sessionKey] || [];
+        console.log(`[DEBUG] History length: ${history.length}`);
+        
+        if (history.length === 0) {
+            console.log(`[DEBUG] No history found for session ${sessionKey}, fetching from server...`);
+            // If no history in memory, fetch it from the server
+            fetchChatHistory(sessionKey);
+            return; // Don't display anything yet, wait for fetch to complete
+        }
+        
+        // Display the history
         history.forEach(item => {
+            console.log(`[DEBUG] Displaying history item:`, item);
             addMessage('🧑 You: ' + item.question, 'user');
             
-            // Format answer with confidence and sources if available
-            //let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
-            //if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
-              //  answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
-            //}
+            // Format answer with sources if available
+            let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
             if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
                 answerText += `<br><strong>Sources:</strong> ${item.sources}`;
             }
             addMessage(answerText, 'ai');
         });
-        // Do not call setChatBarEnabled here; chat bar enable/disable is handled by setChatBarAndBatchQnAEnabled only
+        
+        // Update chat input state based on current topic selection
+        setTimeout(updateChatInputState, 100);
     }
 
     function setChatBarEnabled(enabled) {
@@ -995,26 +1515,187 @@ window.addEventListener('DOMContentLoaded', function() {
     }
 
     function fetchChatHistory(sessionKey) {
+        console.log(`[DEBUG] Fetching chat history for session: ${sessionKey}`);
+        
         fetch(`/get_history?session_key=${encodeURIComponent(sessionKey)}`)
-            .then(res => res.json())
+            .then(res => {
+                console.log(`[DEBUG] Fetch response status: ${res.status}`);
+                return res.json();
+            })
             .then(data => {
+                console.log(`[DEBUG] Fetched history data:`, data);
                 chatHistories[sessionKey] = data.history || [];
+                console.log(`[DEBUG] Updated chatHistories[${sessionKey}]:`, chatHistories[sessionKey]);
+                
+                // Now display the history
+                displayChatHistory(sessionKey);
+            })
+            .catch(error => {
+                console.error(`[ERROR] Failed to fetch chat history for session ${sessionKey}:`, error);
+                // Set empty history to prevent infinite loops
+                chatHistories[sessionKey] = [];
                 displayChatHistory(sessionKey);
             });
+    }
+
+    // Topic persistence using localStorage
+    let selectedTopics = new Set();
+
+    // Load saved topics from localStorage (but don't override default All Topics on page load)
+    function loadSavedTopics() {
+        const savedTopics = localStorage.getItem('faqBotSelectedTopics');
+        if (savedTopics) {
+            try {
+                const topicArray = JSON.parse(savedTopics);
+                selectedTopics = new Set(topicArray);
+                
+                // Update UI to reflect saved topics
+                updateTopicCheckboxes();
+                
+                // Update current chat session
+                currentChatSessionKey = getChatSessionKey(Array.from(selectedTopics));
+                
+                console.log('Loaded saved topics:', Array.from(selectedTopics));
+            } catch (e) {
+                console.error('Error loading saved topics:', e);
+                selectedTopics = new Set(['all']);
+                updateTopicCheckboxes();
+            }
+        } else {
+            // No saved topics, default to "All Topics"
+            selectedTopics = new Set(['all']);
+            updateTopicCheckboxes();
+        }
+        
+        console.log('Final selectedTopics after loadSavedTopics:', Array.from(selectedTopics));
+        
+        // Update chat input state after loading topics
+        setTimeout(updateChatInputState, 200);
+    }
+
+    // Save topics to localStorage
+    function saveTopics() {
+        try {
+            const topicArray = Array.from(selectedTopics);
+            localStorage.setItem('faqBotSelectedTopics', JSON.stringify(topicArray));
+            console.log('Saved topics to localStorage:', topicArray);
+        } catch (e) {
+            console.error('Error saving topics:', e);
+        }
+    }
+
+    // Update topic checkboxes to reflect current selection
+    function updateTopicCheckboxes() {
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        if (menu) {
+            const checkboxes = menu.querySelectorAll('.form-check-input');
+            checkboxes.forEach(checkbox => {
+                if (selectedTopics.has(checkbox.value)) {
+                    checkbox.checked = true;
+                } else {
+                    checkbox.checked = false;
+                }
+            });
+        }
+        
+        // Update chat input state after updating checkboxes
+        setTimeout(updateChatInputState, 100);
+    }
+
+    // Clear saved topics (useful for resetting preferences)
+    function clearSavedTopics() {
+        localStorage.removeItem('faqBotSelectedTopics');
+        selectedTopics = new Set();
+        updateTopicCheckboxes();
+        currentChatSessionKey = 'topics:all';
+        console.log('Cleared saved topics');
+    }
+
+    // Function to manually save current topic selection
+    function saveCurrentTopics() {
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        if (menu) {
+            const checked = menu.querySelectorAll('.form-check-input:checked');
+            const selected = Array.from(checked).map(cb => cb.value);
+            selectedTopics = new Set(selected);
+            saveTopics();
+        }
+    }
+
+            // Handle special topic selections (All Topics)
+    function handleSpecialTopicSelection(checkbox) {
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        if (!menu) return;
+
+        console.log(`[DEBUG] handleSpecialTopicSelection called with:`, checkbox.value, checkbox.checked);
+
+        if (checkbox.value === 'all' && checkbox.checked) {
+            // "All Topics" selected - uncheck everything else
+            const checkboxes = menu.querySelectorAll('.form-check-input');
+            checkboxes.forEach(cb => {
+                if (cb !== checkbox) {
+                    cb.checked = false;
+                }
+            });
+            selectedTopics = new Set(['all']);
+        } else if (checkbox.value !== 'all') {
+            // Regular topic selected - uncheck "All Topics"
+            const allCheckbox = menu.querySelector('.form-check-input[value="all"]');
+            if (allCheckbox) allCheckbox.checked = false;
+            
+            // Update selectedTopics based on current selection
+            const checked = menu.querySelectorAll('.form-check-input:checked');
+            const selected = Array.from(checked).map(cb => cb.value);
+            selectedTopics = new Set(selected);
+        }
+        
+        console.log(`[DEBUG] selectedTopics updated to:`, Array.from(selectedTopics));
+        
+        // Save to localStorage
+        saveTopics();
+        
+        // Update chat session
+        currentChatSessionKey = getChatSessionKey(Array.from(selectedTopics));
+        
+        // Update chat input state based on new topic selection
+        updateChatInputState();
     }
 
     function attachChatTopicsDropdownHandler() {
         const menu = document.getElementById('chatTopicsDropdownMenu');
         if (menu) {
-            menu.addEventListener('change', function() {
-                const selected = Array.from(menu.querySelectorAll('.form-check-input:checked')).map(cb => cb.value);
-                currentChatSessionKey = getChatSessionKey(selected);
-                if (chatHistories[currentChatSessionKey]) {
-                    displayChatHistory(currentChatSessionKey);
-                } else {
-                    fetchChatHistory(currentChatSessionKey);
+            menu.addEventListener('change', function(event) {
+                // Handle the change event
+                if (event.target && event.target.type === 'checkbox') {
+                    handleSpecialTopicSelection(event.target);
                 }
-                // Also update the Upload Questionnaire button
+                
+                // Update button label
+                updateBtnLabel();
+                
+                // Update chat session and UI
+                const selected = Array.from(menu.querySelectorAll('.form-check-input:checked')).map(cb => cb.value);
+                const newSessionKey = getChatSessionKey(selected);
+                
+                console.log(`[DEBUG] Topic selection changed:`);
+                console.log(`[DEBUG]   Selected topics:`, selected);
+                console.log(`[DEBUG]   Old session key: ${currentChatSessionKey}`);
+                console.log(`[DEBUG]   New session key: ${newSessionKey}`);
+                
+                // Only update if the session key actually changed
+                if (newSessionKey !== currentChatSessionKey) {
+                    currentChatSessionKey = newSessionKey;
+                    console.log(`[DEBUG] Session key updated to: ${currentChatSessionKey}`);
+                    
+                    // Always fetch fresh history for the new session
+                    fetchChatHistory(currentChatSessionKey);
+                } else {
+                    console.log(`[DEBUG] Session key unchanged, just updating display`);
+                    displayChatHistory(currentChatSessionKey);
+                }
+                
+                // Update the Upload Questionnaire button
+                updateChatInputState();
                 updateUploadQuestionnaireButton();
             });
         }
@@ -1052,11 +1733,10 @@ function initializeAI() {
         if (data.status === 'success' && data.ready) {
             aiInitialized = true;
             updateStatus(true);
-            const questionInput = document.getElementById('questionInput');
-            const askButton = document.getElementById('askButton');
             
-            if (questionInput) questionInput.disabled = false;
-            if (askButton) askButton.disabled = false;
+            // Update chat input state based on current topic selection
+            setTimeout(updateChatInputState, 100);
+            
             console.log('AI initialized successfully');
         } else if (data.status === 'initializing') {
             updateStatus('connecting');
@@ -1083,11 +1763,10 @@ function checkAIStatus() {
         if (data.ready) {
             aiInitialized = true;
             updateStatus(true);
-            const questionInput = document.getElementById('questionInput');
-            const askButton = document.getElementById('askButton');
             
-            if (questionInput) questionInput.disabled = false;
-            if (askButton) askButton.disabled = false;
+            // Update chat input state based on current topic selection
+            setTimeout(updateChatInputState, 100);
+            
             addLogMessage('✅ AI Assistant is ready!');
             console.log('AI is ready');
         } else if (data.status === 'initializing') {
@@ -1235,6 +1914,9 @@ function setupEventListeners() {
                 if (data.error) {
                     alert('Error: ' + data.error);
                 } else {
+                    // Start questionnaire mode to collect IDK responses
+                    startQuestionnaireMode();
+                    
                     // Start progress monitoring
                     const jobId = data.job_id || 'unknown';
                     monitorQuestionnaireProgress(jobId);
@@ -1323,7 +2005,7 @@ function processCheckerFiles() {
     addLogMessage('📄 Files selected: ' + fileNames.join(', '));
     
     // TODO: Implement question processing logic
-    addMessage('🤖 AI: Question processing feature will be implemented soon.', 'ai');
+                addMessage('🤖 AI: Question processing feature will be implemented soon.', 'ai', false);
 }
 
 function handleCheckerUpload() {
@@ -1367,6 +2049,10 @@ function askQuestion() {
     const input = document.getElementById('questionInput');
     const question = input.value.trim();
     if (!question) return;
+    
+    // Store the current question globally for IDK alerts
+    window.currentQuestion = question;
+    
     addMessage('🧑 You: ' + question, 'user');
     input.value = '';
     // Add thinking robot message
@@ -1388,7 +2074,7 @@ function askQuestion() {
         if (thinkingMsg) thinkingMsg.remove();
         
         if (data.error) {
-            addMessage('❌ Error: ' + data.error, 'ai');
+            addMessage('❌ Error: ' + data.error, 'ai', false);
         } else {
             // Create the AI response container
             let aiResponse = '🤖 <strong>AI:</strong> ';
@@ -1400,9 +2086,9 @@ function askQuestion() {
             aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
             
             // Add confidence if available
-            if (data.confidence) {
-                aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
-            }
+            //if (data.confidence) {
+            //    aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
+            //}
             
             // Add sources if available
             if (data.sources) {
@@ -1413,13 +2099,26 @@ function askQuestion() {
                 }
             }
             
-            addMessage(aiResponse, 'ai');
+            // Add safety and hallucination information
+            if (data.safety_issues && data.safety_issues.length > 0) {
+                aiResponse += '<br><span class="safety-warning" style="color: #d32f2f; font-weight: bold;">⚠️ SAFETY ISSUE: ' + data.safety_issues.join(', ') + '</span>';
+            }
+            
+            if (data.is_hallucination) {
+                aiResponse += '<br><span class="safety-warning" style="color: #f57c00; font-weight: bold;">⚠️ HALLUCINATION DETECTED: This answer may contain information not directly supported by the provided documents. Please verify with official sources.</span>';
+            }
+            
+            if (data.hallucination_score > 0.3) {
+                aiResponse += '<br><span class="hallucination-score" style="color: #f57c00;">🔍 Hallucination Risk Score: ' + (data.hallucination_score * 100).toFixed(1) + '%</span>';
+            }
+            
+            addMessage(aiResponse, 'ai', true);
         }
     })
     .catch(error => {
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
-        addMessage('❌ Error: ' + error, 'ai');
+        addMessage('❌ Error: ' + error, 'ai', false);
     });
 }
 
@@ -1446,7 +2145,7 @@ function uploadFiles() {
     .then(response => response.json())
     .then(data => {
         if (data.status === 'success') {
-            addMessage('📚 Documents uploaded: ' + data.files.join(', '), 'ai');
+            addMessage('📚 Documents uploaded: ' + data.files.join(', '), 'ai', false);
             addLogMessage('📚 Documents uploaded successfully: ' + data.files.join(', '));
             addLogMessage('💾 Documents are now permanently stored and will be available in future sessions');
             hideUploadPanel();
@@ -1489,17 +2188,16 @@ function toggleMode() {
             // Update interface based on mode
             if (currentMode === 'Checker') {
                 document.getElementById('questionInput').placeholder = 'Ask questions or use upload button...';
-                document.getElementById('questionInput').disabled = false;
-                document.getElementById('askButton').disabled = false;
                 document.getElementById('checkerUploadBtn').disabled = false;
                 addLogMessage('🔄 Switched to Checker mode');
             } else {
                 document.getElementById('questionInput').placeholder = 'Ask your compliance question...';
-                document.getElementById('questionInput').disabled = false;
-                document.getElementById('askButton').disabled = false;
                 document.getElementById('checkerUploadBtn').disabled = true;
                 addLogMessage('🔄 Switched to Q&A mode');
             }
+            
+            // Update chat input state based on current topic selection
+            setTimeout(updateChatInputState, 100);
         } else {
             alert('Error: ' + data.error);
         }
@@ -1528,7 +2226,7 @@ function exportChat() {
     .then(data => {
         hideLoading();
         if (data.status === 'success') {
-            addMessage('💾 ' + data.message, 'ai');
+            addMessage('💾 ' + data.message, 'ai', false);
         } else {
             alert('Error: ' + data.error);
         }
@@ -1552,11 +2250,423 @@ function handleFileSelect() {
     }
 }
 
-function addMessage(text, type) {
+// Global IDK Questions Collector
+window.idkQuestions = [];
+window.isQuestionnaireMode = false;
+
+// IDK Detection and Highlighting Functions
+function detectIDKPatterns(text) {
+    // Enhanced patterns to catch more IDK-like responses
+    const idkPatterns = [
+        // Direct "I don't know" statements
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:know|kno)\s+(?:the\s+)?(?:answer|information|details|about\s+this)\b/gi,
+        
+        // "I couldn't find that information"
+        /\b(?:i\s+)?(?:couldn'?t|could\s+not)\s+(?:find|locate)\s+(?:that\s+)?(?:information|answer|data)\b/gi,
+        
+        // "I don't have information about this"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:information|data|details)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        
+        // "I'm not able to answer this question"
+        /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:able|capable)\s+to\s+(?:answer|provide)\s+(?:this\s+)?(?:question|request)\b/gi,
+        
+        // "I cannot answer this question"
+        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:answer|provide|give)\s+(?:this\s+)?(?:question|query|request)\b/gi,
+        
+        // "No information found for this"
+        /\b(?:no\s+)?(?:information|data|details)\s+(?:found|available)\s+(?:for|about|regarding)\s+(?:this|that|it)\b/gi,
+        
+        // "I'm not sure about this"
+        /\b(?:i\s+)?(?:am\s+)?(?:not\s+)?(?:sure|certain)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        
+        // "I cannot determine this"
+        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+determine\s+(?:this|that|it)\b/gi,
+        
+        // "This is not covered in the documents"
+        /\b(?:this\s+)?(?:is\s+)?(?:not\s+)?(?:covered|addressed|mentioned)\s+(?:in|by|within)\s+(?:the\s+)?(?:documents|materials|sources)\b/gi,
+        
+        // "I have no knowledge about this"
+        /\b(?:i\s+)?(?:have\s+)?(?:no\s+)?(?:knowledge|information)\s+(?:about|regarding)\s+(?:this|that|it)\b/gi,
+        
+        // NEW: "I don't have specific information"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:specific|detailed|particular)\s+(?:information|data|details)\b/gi,
+        
+        // NEW: "I apologize, but I cannot provide"
+        /\b(?:i\s+)?(?:apologize|apologise|sorry)\s*,?\s*(?:but\s+)?(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:provide|give|offer)\b/gi,
+        
+        // NEW: "I'm unable to provide"
+        /\b(?:i\s+)?(?:am\s+)?(?:unable|not\s+able)\s+to\s+(?:provide|give|offer|answer)\b/gi,
+        
+        // NEW: "This information is not available"
+        /\b(?:this\s+)?(?:information|data|details)\s+(?:is\s+)?(?:not\s+)?(?:available|accessible|obtainable)\b/gi,
+        
+        // NEW: "I cannot find specific details"
+        /\b(?:i\s+)?(?:cannot|cant|can'?t)\s+(?:find|locate|identify)\s+(?:specific|detailed|particular)\s+(?:details|information|data)\b/gi,
+        
+        // NEW: "This falls outside my knowledge"
+        /\b(?:this\s+)?(?:falls|lies)\s+(?:outside|beyond)\s+(?:my\s+)?(?:knowledge|expertise|scope)\b/gi,
+        
+        // NEW: "I don't have access to this information"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:access\s+to|access\s+to\s+the)\s+(?:this\s+)?(?:information|data|details)\b/gi,
+        
+        // ADDITIONAL: General "I don't have" patterns
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:information|data|details|knowledge|context)\b/gi,
+        
+        // ADDITIONAL: "I don't have anything about"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:anything|something|any\s+details)\s+(?:about|regarding|concerning)\b/gi,
+        
+        // ADDITIONAL: "I don't have the information"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:information|data|details|knowledge)\b/gi,
+        
+        // ADDITIONAL: "I don't have enough information"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:information|data|details|knowledge)\b/gi,
+        
+        // ADDITIONAL: "I don't have that information"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:that|this|the)\s+(?:information|data|details|knowledge)\b/gi,
+        
+        // ADDITIONAL: "I don't have any details"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:any\s+)?(?:details|specifics|particulars)\b/gi,
+        
+        // ADDITIONAL: "I don't have the answer"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:answer|solution|response)\b/gi,
+        
+        // ADDITIONAL: "I don't have a response"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:a\s+)?(?:response|answer|solution)\b/gi,
+        
+        // ADDITIONAL: "I don't have the context"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:context|background|framework)\b/gi,
+        
+        // ADDITIONAL: "I don't have the background"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:background|context|history)\b/gi,
+        
+        // ADDITIONAL: "I don't have the details"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:details|particulars|specifics)\b/gi,
+        
+        // ADDITIONAL: "I don't have the specifics"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:specifics|details|particulars)\b/gi,
+        
+        // ADDITIONAL: "I don't have the particulars"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:particulars|details|specifics)\b/gi,
+        
+        // ADDITIONAL: "I don't have the knowledge"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:knowledge|understanding|expertise)\b/gi,
+        
+        // ADDITIONAL: "I don't have the understanding"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:understanding|knowledge|comprehension)\b/gi,
+        
+        // ADDITIONAL: "I don't have the expertise"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:expertise|knowledge|skills)\b/gi,
+        
+        // ADDITIONAL: "I don't have the skills"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:skills|abilities|capabilities)\b/gi,
+        
+        // ADDITIONAL: "I don't have the capabilities"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:capabilities|abilities|skills)\b/gi,
+        
+        // ADDITIONAL: "I don't have the abilities"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:abilities|skills|capabilities)\b/gi,
+        
+        // ADDITIONAL: "I don't have the resources"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:resources|materials|tools)\b/gi,
+        
+        // ADDITIONAL: "I don't have the materials"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:materials|resources|tools)\b/gi,
+        
+        // ADDITIONAL: "I don't have the tools"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:tools|resources|materials)\b/gi,
+        
+        // ADDITIONAL: "I don't have the data"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:data|information|facts)\b/gi,
+        
+        // ADDITIONAL: "I don't have the facts"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:facts|data|information)\b/gi,
+        
+        // ADDITIONAL: "I don't have the evidence"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:evidence|proof|support)\b/gi,
+        
+        // ADDITIONAL: "I don't have the proof"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:proof|evidence|support)\b/gi,
+        
+        // ADDITIONAL: "I don't have the support"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:support|evidence|proof)\b/gi,
+        
+        // ADDITIONAL: "I don't have the documentation"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:documentation|records|files)\b/gi,
+        
+        // ADDITIONAL: "I don't have the records"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:records|documentation|files)\b/gi,
+        
+        // ADDITIONAL: "I don't have the files"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:files|documentation|records)\b/gi,
+        
+        // ADDITIONAL: "I don't have the sources"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sources|references|citations)\b/gi,
+        
+        // ADDITIONAL: "I don't have the references"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:references|sources|citations)\b/gi,
+        
+        // ADDITIONAL: "I don't have the citations"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:citations|references|sources)\b/gi,
+        
+        // ADDITIONAL: "I don't have enough context"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:enough|sufficient|adequate)\s+(?:context|background|framework)\b/gi,
+        
+        // ADDITIONAL: "I don't have the framework"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:framework|structure|outline)\b/gi,
+        
+        // ADDITIONAL: "I don't have the structure"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:structure|framework|outline)\b/gi,
+        
+        // ADDITIONAL: "I don't have the outline"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:outline|structure|framework)\b/gi,
+        
+        // ADDITIONAL: "I don't have the history"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:history|background|timeline)\b/gi,
+        
+        // ADDITIONAL: "I don't have the timeline"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:timeline|history|chronology)\b/gi,
+        
+        // ADDITIONAL: "I don't have the chronology"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:chronology|timeline|sequence)\b/gi,
+        
+        // ADDITIONAL: "I don't have the sequence"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:sequence|order|progression)\b/gi,
+        
+        // ADDITIONAL: "I don't have the order"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:order|sequence|progression)\b/gi,
+        
+        // ADDITIONAL: "I don't have the progression"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:progression|sequence|order)\b/gi,
+        
+        // ADDITIONAL: "I don't have the basis"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:basis|foundation|grounds)\b/gi,
+        
+        // ADDITIONAL: "I don't have the foundation"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:foundation|basis|grounds)\b/gi,
+        
+        // ADDITIONAL: "I don't have the grounds"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:grounds|basis|foundation)\b/gi,
+        
+        // ADDITIONAL: "I don't have the reason"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:reason|justification|explanation)\b/gi,
+        
+        // ADDITIONAL: "I don't have the justification"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:justification|reason|explanation)\b/gi,
+        
+        // ADDITIONAL: "I don't have the explanation"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:explanation|reason|justification)\b/gi,
+        
+        // ADDITIONAL: "I don't have the insight"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:insight|understanding|perspective)\b/gi,
+        
+        // ADDITIONAL: "I don't have the perspective"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:perspective|insight|viewpoint)\b/gi,
+        
+        // ADDITIONAL: "I don't have the viewpoint"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:viewpoint|perspective|insight)\b/gi,
+        
+        // ADDITIONAL: "I don't have the experience"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:experience|practice|exposure)\b/gi,
+        
+        // ADDITIONAL: "I don't have the practice"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:practice|experience|exposure)\b/gi,
+        
+        // ADDITIONAL: "I don't have the exposure"
+        /\b(?:i\s+)?(?:don'?t\s+)?(?:have|possess)\s+(?:the\s+)?(?:exposure|experience|practice)\b/gi
+    ];
+    
+    let hasIDK = false;
+    let highlightedText = text;
+    
+    // Check each pattern with more strict matching
+    idkPatterns.forEach(pattern => {
+        if (pattern.test(text)) {
+            hasIDK = true;
+            // Highlight the matched text
+            highlightedText = highlightedText.replace(pattern, (match) => {
+                return `<span class="idk-highlight">${match}</span>`;
+            });
+        }
+    });
+    
+    return { hasIDK, highlightedText };
+}
+
+function showIDKAlert(question = '') {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'idk-overlay';
+    document.body.appendChild(overlay);
+    
+    // Create alert modal
+    const modal = document.createElement('div');
+    modal.className = 'idk-alert-modal';
+    
+    // Check if we have multiple IDK questions (questionnaire mode)
+    const hasMultipleQuestions = window.idkQuestions.length > 1;
+    const questionCount = window.idkQuestions.length;
+    
+    let modalContent = '';
+    
+    if (hasMultipleQuestions) {
+        // Multiple questions mode - show count and list option
+        modalContent = `
+            <h3>Human Attention Needed</h3>
+            <p><strong>AI Answered IDK to ${questionCount} Questions</strong><br><br>
+            The AI has indicated it doesn't know the answer to ${questionCount} questions during questionnaire processing. 
+            This may require human review or additional context.</p>
+            <div class="idk-alert-buttons">
+                <button onclick="showIDKDetailsList()" class="btn-details">View All Questions (${questionCount})</button>
+                <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
+            </div>
+        `;
+    } else {
+        // Single question mode - show individual question
+        modalContent = `
+            <h3>Human Attention Needed</h3>
+            <p><strong>AI Answered IDK</strong><br><br>
+            The AI has indicated it doesn't know the answer to this question. 
+            This may require human review or additional context.</p>
+            <div class="idk-alert-buttons">
+                <button onclick="showIDKDetails('${question.replace(/'/g, "\\'")}')" class="btn-details">Details</button>
+                <button onclick="closeIDKAlert()" class="btn-acknowledge">Acknowledge</button>
+            </div>
+        `;
+    }
+    
+    modal.innerHTML = modalContent;
+    document.body.appendChild(modal);
+    
+    // Alert will only close when user clicks Acknowledge
+}
+
+function closeIDKAlert() {
+    const overlay = document.querySelector('.idk-overlay');
+    const modal = document.querySelector('.idk-alert-modal');
+    
+    if (overlay) overlay.remove();
+    if (modal) modal.remove();
+}
+
+function showIDKDetails(question) {
+    // Create details modal for single question
+    const detailsModal = document.createElement('div');
+    detailsModal.className = 'idk-details-modal';
+    detailsModal.innerHTML = `
+        <div class="idk-details-content">
+            <h4>📝 Question Details</h4>
+            <p><strong>Question:</strong></p>
+            <div class="question-text">${question}</div>
+            <button onclick="closeIDKDetails()" class="btn-close">Close</button>
+        </div>
+    `;
+    document.body.appendChild(detailsModal);
+}
+
+function showIDKDetailsList() {
+    // Create details modal for multiple questions
+    const detailsModal = document.createElement('div');
+    detailsModal.className = 'idk-details-modal';
+    
+    let questionsList = '';
+    window.idkQuestions.forEach((item, index) => {
+        questionsList += `
+            <div class="question-item">
+                <div class="question-header">
+                    <span class="question-number">${index + 1}</span>
+                    <span class="question-time">${item.timestamp}</span>
+                </div>
+                <div class="question-text">${item.question}</div>
+                <div class="ai-response">${item.response}</div>
+            </div>
+        `;
+    });
+    
+    detailsModal.innerHTML = `
+        <div class="idk-details-content">
+            <h4>📝 IDK Questions Summary (${window.idkQuestions.length})</h4>
+            <div class="questions-list">
+                ${questionsList}
+            </div>
+            <div class="modal-actions">
+                <button onclick="clearIDKQuestions()" class="btn-clear">Clear List</button>
+                <button onclick="closeIDKDetails()" class="btn-close">Close</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(detailsModal);
+}
+
+function closeIDKDetails() {
+    const detailsModal = document.querySelector('.idk-details-modal');
+    if (detailsModal) detailsModal.remove();
+}
+
+function clearIDKQuestions() {
+    window.idkQuestions = [];
+    closeIDKDetails();
+    addLogMessage('✅ IDK questions list cleared');
+}
+
+
+
+
+
+function startQuestionnaireMode() {
+    window.isQuestionnaireMode = true;
+    window.idkQuestions = []; // Clear previous questions
+    addLogMessage('📋 Questionnaire mode started - IDK alerts will be collected and shown at the end');
+}
+
+function endQuestionnaireMode() {
+    window.isQuestionnaireMode = false;
+    
+    // Show final IDK alert if there are any questions
+    if (window.idkQuestions.length > 0) {
+        setTimeout(() => {
+            showIDKAlert(); // This will show the multiple questions alert
+        }, 1000);
+        addLogMessage(`🚨 Questionnaire completed with ${window.idkQuestions.length} IDK responses`);
+    } else {
+        addLogMessage('✅ Questionnaire completed successfully - no IDK responses');
+    }
+}
+
+function addMessage(text, type, isNewMessage = false) {
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${type}-message`;
-    messageDiv.innerHTML = text;
+    
+    // Only check for IDK patterns on NEW AI messages, not on history display
+    if (type === 'ai' && isNewMessage) {
+        const { hasIDK, highlightedText } = detectIDKPatterns(text);
+        messageDiv.innerHTML = highlightedText;
+        
+        // Collect IDK questions instead of showing alerts immediately
+        if (hasIDK) {
+            const question = window.currentQuestion || 'Question not available';
+            
+            // Add to IDK questions list if not already there
+            if (!window.idkQuestions.some(q => q.question === question)) {
+                window.idkQuestions.push({
+                    question: question,
+                    timestamp: new Date().toLocaleTimeString(),
+                    response: text
+                });
+            }
+            
+            // Only show alert immediately if NOT in questionnaire mode
+            if (!window.isQuestionnaireMode) {
+                setTimeout(() => {
+                    showIDKAlert(question);
+                }, 300);
+            }
+        }
+    } else {
+        // For history display or non-AI messages, just show the text without IDK detection
+        messageDiv.innerHTML = text;
+    }
+    
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -1592,157 +2702,25 @@ function hideLoading() {
     document.getElementById('loadingOverlay').style.display = 'none';
 }
 
-// User authentication logic
-const loginBtn = document.getElementById('loginBtn2');
-const registerBtn = document.getElementById('registerBtn2');
-const logoutBtn = document.getElementById('logoutBtn2');
+// Shared user system - no authentication needed
 const userStatusText = document.getElementById('userStatusText2');
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 
-// Check user status on page load
-function checkUserStatus() {
-    fetch('/user_status')
-    .then(response => response.json())
-    .then(data => {
-        if (data.logged_in) {
-            userStatusText.textContent = `Welcome, ${data.username}!`;
-            loginBtn.classList.add('hidden');
-            registerBtn.classList.add('hidden');
-            logoutBtn.classList.remove('hidden');
-            window.isLoggedInUser = true;  // Set flag for logged-in user
-        } else {
-            userStatusText.textContent = 'Guest User';
-            loginBtn.classList.remove('hidden');
-            registerBtn.classList.remove('hidden');
-            logoutBtn.classList.add('hidden');
-            window.isLoggedInUser = false;  // Set flag for guest user
-        }
-    });
+// Always show shared user status
+function setSharedUserStatus() {
+    userStatusText.textContent = 'Shared User';
+    window.isLoggedInUser = true;  // Always treat as logged-in user
 }
 
-// Login functionality
-loginBtn.addEventListener('click', function() {
-    const modal = new bootstrap.Modal(document.getElementById('loginModal'));
-    modal.show();
-});
+// Login functionality removed - no longer needed with shared user system
 
-document.getElementById('loginSubmitBtn').addEventListener('click', function() {
-    const username = document.getElementById('loginUsername').value;
-    const password = document.getElementById('loginPassword').value;
-    
-    fetch('/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username, password})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            // Hide modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('loginModal'));
-            if (modal) modal.hide();
-            
-            // Clear any existing guest session data before checking user status
-            if (!window.isLoggedInUser) {
-                fetch('/clear_guest_session', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'}
-                }).catch(error => {
-                    console.log('Could not clear guest session:', error);
-                });
-            }
-            
-            checkUserStatus();
-            // Fetch and display chat history
-            fetch('/get_history')
-                .then(response => response.json())
-                .then(data => {
-                    // Clear chat window
-                    const chatMessages = document.getElementById('chatMessages');
-                    chatMessages.innerHTML = '';
-                    // Display each message in order (oldest to newest)
-                    (data.history || []).reverse().forEach(item => {
-                        addMessage('🧑 You: ' + item.question, 'user');
-                        
-                        // Format answer with confidence and sources if available
-                        let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
-                        if (item.confidence && item.confidence !== 'N/A' && item.confidence !== 0) {
-                            answerText += `<br><strong>Confidence:</strong> ${item.confidence}%`;
-                        }
-                        if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
-                            answerText += `<br><strong>Sources:</strong> ${item.sources}`;
-                        }
-                        addMessage(answerText, 'ai');
-                    });
-                });
-        } else {
-            alert(data.error || 'Login failed');
-        }
-    });
-});
+// Register functionality removed - no longer needed with shared user system
 
-// Register functionality
-registerBtn.addEventListener('click', function() {
-    const modal = new bootstrap.Modal(document.getElementById('registerModal'));
-    modal.show();
-});
-
-document.getElementById('registerSubmitBtn').addEventListener('click', function() {
-    const username = document.getElementById('registerUsername').value;
-    const email = document.getElementById('registerEmail').value;
-    const password = document.getElementById('registerPassword').value;
-    
-    fetch('/register', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username, email, password})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            bootstrap.Modal.getInstance(document.getElementById('registerModal')).hide();
-            
-            // Clear any existing guest session data before checking user status
-            if (!window.isLoggedInUser) {
-                fetch('/clear_guest_session', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'}
-                }).catch(error => {
-                    console.log('Could not clear guest session:', error);
-                });
-            }
-            
-            checkUserStatus();
-            alert('Registration successful!');
-        } else {
-            alert('Registration failed: ' + data.error);
-        }
-    });
-});
-
-// Logout functionality
-logoutBtn.addEventListener('click', function() {
-    fetch('/logout', {method: 'POST'})
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === 'success') {
-            checkUserStatus();
-            alert('Logout successful!');
-        }
-    });
-});
+// Logout functionality removed - no longer needed with shared user system
 
 // Clear history functionality
 clearHistoryBtn.addEventListener('click', function() {
-    if (confirm('Are you sure you want to clear your chat history? This cannot be undone.')) {
-        fetch('/clear_history', {method: 'POST'})
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                alert('Chat history cleared!');
-            }
-        });
-    }
+    showClearHistoryModal();
 });
 
 // Export history functionality
@@ -1792,7 +2770,7 @@ function renderDocsTableHeader() {
         { key: 'topics', label: 'Tags' },
         { key: 'type', label: 'Type' },
         { key: 'uploaded', label: 'Uploaded' },
-        { key: 'actions', label: 'Actions' }
+        { key: 'actions', label: 'Rename' }
     ];
     headerRow.innerHTML = '';
     columns.forEach(col => {
@@ -1887,7 +2865,11 @@ function renderDocsTable() {
                 <input type="checkbox" class="form-check-input doc-checkbox" value="${doc.name}">
             </td>
             <td>${doc.name}</td>
-            <td>${tagsHtml}</td>
+            <td class="editable-topics" data-filename="${doc.name}" data-tags='${JSON.stringify(tags)}' style="cursor: pointer;" title="Double-click to edit topics">
+                <div class="topics-container">
+                    ${tagsHtml}
+                </div>
+            </td>
             <td>${doc.type}</td>
             <td>${doc.uploaded}</td>
             <td>
@@ -1913,6 +2895,17 @@ function renderDocsTable() {
             showRenameModal(filename);
         });
     });
+    
+    // Add event listeners to editable topics (double-click)
+    const editableTopics = document.querySelectorAll('.editable-topics');
+    editableTopics.forEach(topicCell => {
+        topicCell.addEventListener('dblclick', function() {
+            const filename = this.getAttribute('data-filename');
+            const currentTags = JSON.parse(this.getAttribute('data-tags') || '[]');
+            showEditTopicsModal(filename, currentTags);
+        });
+    });
+    
     if (pendingAnimationStop) { setTimeout(pendingAnimationStop, 1500); pendingAnimationStop = null; }
 }
 
@@ -2253,6 +3246,8 @@ addDocInput.addEventListener('change', (e) => {
                 loadDocuments();
                 setTimeout(() => {
                     loadDocuments();
+                    // Also update chat topics dropdown in case new topics were created
+                    updateChatTopicsDropdown();
                 }, 2000);
             } else {
                 updateLogMessage(progressId, `❌ Bulk upload failed: ${data.error}`);
@@ -2447,6 +3442,8 @@ function continueUploadWithNewName(newFilename) {
             addLogMessage(`📤 Document "${newFilename}" uploaded successfully`);
             setTimeout(() => {
                 loadDocuments();
+                // Also update chat topics dropdown in case new topics were created
+                updateChatTopicsDropdown();
             }, 1000);
         } else if (data.status === 'conflict') {
             showConflictModal(data.message, data.filename);
@@ -2498,6 +3495,8 @@ function continueReplaceWithNewName(newFilename) {
             addLogMessage(`🔄 Document "${currentConflictData.oldFilename}" replaced with "${newFilename}"`);
             setTimeout(() => {
                 loadDocuments();
+                // Also update chat topics dropdown in case new topics were created
+                updateChatTopicsDropdown();
             }, 1000);
         } else if (data.status === 'conflict') {
             showConflictModal(data.message, data.filename, data.old_filename);
@@ -2614,13 +3613,16 @@ function switchTopic(topicId) {
     currentTopic = topicId;
     selectedTopics = topicId === 'all' ? [] : [topicId];
     
-    // Update checkboxes
-    const checkboxes = document.querySelectorAll('.topic-checkbox');
-    checkboxes.forEach(checkbox => {
-        checkbox.checked = selectedTopics.includes(checkbox.value);
-    });
+    // Update the document management topic dropdown checkboxes
+    updateDocumentManagementTopicSelection();
     
-    const topicName = topicId === 'all' ? 'All Topics' : topics.find(t => t.id === topicId)?.name || 'Unknown Topic';
+    // Get topic name, with fallback for when topics are still loading
+    let topicName = 'All Topics';
+    if (topicId !== 'all') {
+        const topic = topics.find(t => t.id == topicId);
+        topicName = topic ? topic.name : `Topic ${topicId}`;
+    }
+    
     document.getElementById('currentTopicName').textContent = topicName;
     
     // Load documents for this topic
@@ -2712,10 +3714,32 @@ document.getElementById('createTopicBtn').addEventListener('click', function(e) 
              document.getElementById('topicDescription').value = '';
              
              // Reload topics and switch to the new topic
-             loadTopics();
-             setTimeout(() => {
-                 switchTopic(data.topic_id);
-             }, 500);
+             loadTopics(() => {
+                 console.log('[DEBUG] Topics reloaded, updating dropdowns...');
+                 
+                 // Update the chat topics dropdown
+                 updateChatTopicsDropdown();
+                 
+                 // Update the document management topic dropdown
+                 updateDocumentManagementTopics();
+                 
+                 console.log('[DEBUG] Dropdowns updated, switching to topic...');
+                 
+                 // Switch to the new topic (with longer delay to ensure dropdown is ready)
+                 setTimeout(() => {
+                     console.log(`[DEBUG] Switching to topic ${data.topic_id}...`);
+                     switchTopic(data.topic_id);
+                     
+                     // Force update the dropdown selection after switching
+                     setTimeout(() => {
+                         console.log('[DEBUG] Forcing dropdown selection update...');
+                         updateDocumentManagementTopicSelection();
+                         
+                         // Force select the new topic in the dropdown
+                         forceSelectTopicInDropdown(data.topic_id);
+                     }, 300);
+                 }, 300);
+             });
          } else {
              addLogMessage(`❌ Error creating topic: ${data.error}`);
          }
@@ -2787,7 +3811,23 @@ document.getElementById('createTopicBtn').addEventListener('click', function(e) 
              
              // Reload topics, then load all documents after dropdown is rebuilt
              loadTopics(() => {
-                 loadDocuments();
+                 // Update the chat topics dropdown
+                 updateChatTopicsDropdown();
+                 
+                 // Update the document management topic dropdown
+                 updateDocumentManagementTopics();
+                 
+                          // Check if the deleted topic was the current chat topic and switch to All Topics if needed
+         checkAndSwitchChatTopicIfDeleted();
+         
+                  // Force switch to All Topics if we were on a deleted topic
+         forceSwitchToAllTopicsIfNeeded();
+         
+         // Also directly check and fix chat topic selection
+         fixChatTopicSelectionAfterDeletion();
+         
+         // Load documents
+         loadDocuments();
              });
          } else {
              addLogMessage(`❌ Error deleting topics: ${data.error}`);
@@ -2811,6 +3851,19 @@ document.getElementById('createTopicBtn').addEventListener('click', function(e) 
 loadDocuments();
 loadTopics();
 
+// Ensure topic selection is synchronized after everything loads
+document.addEventListener('DOMContentLoaded', function() {
+    // Wait a bit for topics to load, then sync
+    setTimeout(() => {
+        if (topics && topics.length > 0) {
+            syncTopicDropdownWithCurrentView();
+            
+            // Also check if any deleted topics need chat switching
+            checkAndSwitchChatTopicIfDeleted();
+        }
+    }, 1000);
+});
+
  // Initialize topic checkboxes after topics are loaded
  setTimeout(() => {
      console.log('Initializing topic checkboxes...');
@@ -2823,6 +3876,9 @@ loadTopics();
      
      // Initialize delete button state
      updateDeleteTopicsButton();
+     
+     // Ensure the dropdown reflects the current selection
+     updateDocumentManagementTopicSelection();
  }, 500);
  // Confirm bulk delete functionality
  document.getElementById('confirmBulkDeleteBtn').addEventListener('click', function() {
@@ -2883,6 +3939,614 @@ loadTopics();
  });
  
  // --- End Document Management UI Logic ---
+
+// --- Topic Editing Functions ---
+function showEditTopicsModal(filename, currentTags) {
+    // Populate the modal with current document info
+    document.getElementById('editTopicsDocName').textContent = filename;
+    
+    // Get all available topics
+    const topicCheckboxes = document.getElementById('editTopicsCheckboxes');
+    topicCheckboxes.innerHTML = '';
+    
+    // Ensure topics are loaded
+    if (!topics || topics.length === 0) {
+        // Load topics if not already loaded
+        loadTopics(() => {
+            populateTopicCheckboxes(currentTags);
+        });
+    } else {
+        populateTopicCheckboxes(currentTags);
+    }
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('editTopicsModal'));
+    modal.show();
+}
+
+function populateTopicCheckboxes(currentTags) {
+    const topicCheckboxes = document.getElementById('editTopicsCheckboxes');
+    topicCheckboxes.innerHTML = '';
+    
+    // Add checkboxes for each topic
+    topics.forEach(topic => {
+        const div = document.createElement('div');
+        div.className = 'form-check';
+        const isChecked = currentTags.includes(topic.name) ? 'checked' : '';
+        div.innerHTML = `
+            <input class="form-check-input edit-topic-checkbox" type="checkbox" value="${topic.id}" id="edit_topic_${topic.id}" ${isChecked}>
+            <label class="form-check-label" for="edit_topic_${topic.id}">
+                📂 ${topic.name}
+            </label>
+        `;
+        topicCheckboxes.appendChild(div);
+    });
+}
+
+// Add event listener for save button
+document.addEventListener('DOMContentLoaded', function() {
+    const saveTopicsBtn = document.getElementById('saveTopicsBtn');
+    if (saveTopicsBtn) {
+        saveTopicsBtn.addEventListener('click', function() {
+            saveDocumentTopics();
+        });
+    }
+});
+
+function saveDocumentTopics() {
+    const filename = document.getElementById('editTopicsDocName').textContent;
+    const selectedTopics = Array.from(document.querySelectorAll('.edit-topic-checkbox:checked')).map(cb => cb.value);
+    
+    // Show loading state
+    const saveBtn = document.getElementById('saveTopicsBtn');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    
+    // Send update request to backend
+    fetch('/update_document_topics', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            filename: filename,
+            topic_ids: selectedTopics
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Close modal
+            bootstrap.Modal.getInstance(document.getElementById('editTopicsModal')).hide();
+            
+            // Show success message
+            addLogMessage(`✅ Topics updated for "${filename}"`);
+            
+            // Update the specific document row in the table immediately
+            updateDocumentRowTopics(filename, data.updated_topics || []);
+            
+            // Refresh the documents table to show updated topics
+            loadDocuments();
+            
+            // Update the chat topics dropdown to reflect changes
+            updateChatTopicsDropdown();
+        } else {
+            addLogMessage(`❌ Error updating topics: ${data.error}`);
+        }
+    })
+    .catch(error => {
+        addLogMessage(`❌ Error updating topics: ${error.message}`);
+    })
+    .finally(() => {
+        // Restore button state
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalText;
+    });
+}
+
+// --- End Topic Editing Functions ---
+
+// --- Real-time Updates Functions ---
+function updateChatTopicsDropdown() {
+    // Reload topics from the server
+    loadTopics(() => {
+        // Update the chat topics dropdown menu
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        if (!menu) return;
+        
+        // Clear existing menu items
+        menu.innerHTML = '';
+        
+        // Add All Topics option
+        const allLi = document.createElement('li');
+        allLi.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="all" id="chatTopic_all"><label class="form-check-label" for="chatTopic_all">All Topics</label></div>`;
+        menu.appendChild(allLi);
+        
+        // Add other topics
+        (topics || []).forEach(topic => {
+            const li = document.createElement('li');
+            li.innerHTML = `<div class="form-check"><input class="form-check-input" type="checkbox" value="${topic.id}" id="chatTopic_${topic.id}"><label class="form-check-label" for="chatTopic_${topic.id}">${topic.name}</label></div>`;
+            menu.appendChild(li);
+        });
+        
+        // Restore previously selected topics if possible
+        restoreChatTopicSelection();
+        
+        // Check if any selected topics were deleted and switch to All Topics if needed
+        checkAndSwitchChatTopicIfDeleted();
+        
+        // Update the chat input state
+        updateChatInputState();
+    });
+}
+
+function restoreChatTopicSelection() {
+    // Try to restore the previously selected topics
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    if (!menu) return;
+    
+    // Get current selection from the button text
+    const btn = document.getElementById('chatTopicsDropdownBtn');
+    if (!btn) return;
+    
+    const currentSelection = btn.textContent.trim();
+    
+    if (currentSelection === 'All Topics') {
+        // Check the 'all' checkbox
+        const allCheckbox = menu.querySelector('#chatTopic_all');
+        if (allCheckbox) allCheckbox.checked = true;
+            } else if (currentSelection !== 'All Topics') {
+        // Try to restore specific topic selections
+        const topicNames = currentSelection.split(', ');
+        topicNames.forEach(topicName => {
+            const topic = topics.find(t => t.name === topicName);
+            if (topic) {
+                const checkbox = menu.querySelector(`#chatTopic_${topic.id}`);
+                if (checkbox) checkbox.checked = true;
+            }
+        });
+    }
+}
+
+// --- End Real-time Updates Functions ---
+
+// --- Immediate UI Updates ---
+function updateDocumentRowTopics(filename, updatedTopics) {
+    // Find the document row in the table
+    const topicCell = document.querySelector(`.editable-topics[data-filename="${filename}"]`);
+    if (!topicCell) return;
+    
+    // Update the data-tags attribute
+    topicCell.setAttribute('data-tags', JSON.stringify(updatedTopics));
+    
+    // Update the visual display
+    const topicsContainer = topicCell.querySelector('.topics-container');
+    if (topicsContainer) {
+        const tagsHtml = updatedTopics.length > 0 ? 
+            updatedTopics.map(tag => `<span class="badge bg-primary me-1">${tag}</span>`).join('') : 
+            '<span class="text-muted">No tags</span>';
+        
+        topicsContainer.innerHTML = tagsHtml;
+    }
+}
+
+// --- End Immediate UI Updates ---
+
+// --- Document Management Topic Updates ---
+function updateDocumentManagementTopics() {
+    // Update the document management topic dropdown
+    const topicDropdownMenu = document.getElementById('topicDropdownMenu');
+    if (!topicDropdownMenu) return;
+    
+    // Find the topicCheckboxes container specifically
+    const topicCheckboxesContainer = document.getElementById('topicCheckboxes');
+    if (!topicCheckboxesContainer) return;
+    
+    // Clear only the topic checkboxes container, not the entire dropdown
+    topicCheckboxesContainer.innerHTML = '';
+    
+    // Add updated topic checkboxes to the container
+    (topics || []).forEach(topic => {
+        const div = document.createElement('div');
+        div.className = 'form-check';
+        div.innerHTML = `
+            <input class="form-check-input topic-checkbox" type="checkbox" value="${topic.id}" id="doc_topic_${topic.id}">
+            <label class="form-check-label" for="doc_topic_${topic.id}">
+                📂 ${topic.name}
+            </label>
+        `;
+        topicCheckboxesContainer.appendChild(div);
+    });
+    
+    // Re-attach event listeners
+    attachDocumentManagementTopicListeners();
+    
+    // Restore the current selection state
+    updateDocumentManagementTopicSelection();
+}
+
+function attachDocumentManagementTopicListeners() {
+    const topicDropdownMenu = document.getElementById('topicDropdownMenu');
+    if (!topicDropdownMenu) return;
+    
+    // Add event listeners to new topic checkboxes
+    const checkboxes = topicDropdownMenu.querySelectorAll('.topic-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            // Update the selected topics
+            updateSelectedTopics();
+            
+            // Update the current topic state to match the selection
+            if (selectedTopics.length === 0) {
+                currentTopic = 'all';
+                document.getElementById('currentTopicName').textContent = 'All Topics';
+            } else if (selectedTopics.length === 1) {
+                currentTopic = selectedTopics[0];
+                const topic = topics.find(t => t.id == selectedTopics[0]);
+                if (topic) {
+                    document.getElementById('currentTopicName').textContent = topic.name;
+                }
+            } else {
+                currentTopic = 'multiple';
+                const topicNames = selectedTopics.map(id => topics.find(t => t.id == id)?.name).filter(Boolean);
+                document.getElementById('currentTopicName').textContent = topicNames.join(', ');
+            }
+            
+            // Load documents for the new selection
+            loadDocuments();
+        });
+    });
+}
+
+// --- End Document Management Topic Updates ---
+
+// --- Topic Selection Synchronization ---
+function updateDocumentManagementTopicSelection() {
+    // Update the document management topic dropdown to reflect current selection
+    const topicDropdownMenu = document.getElementById('topicDropdownMenu');
+    if (!topicDropdownMenu) return;
+    
+    // Get all topic checkboxes in the document management dropdown
+    const checkboxes = topicDropdownMenu.querySelectorAll('.topic-checkbox');
+    
+    checkboxes.forEach(checkbox => {
+        const topicId = checkbox.value;
+        
+        if (currentTopic === 'all') {
+            // If "All Topics" is selected, uncheck all specific topics
+            checkbox.checked = false;
+        } else if (currentTopic === 'multiple') {
+            // If multiple topics are selected, check the ones in selectedTopics
+            checkbox.checked = selectedTopics.includes(topicId);
+        } else {
+            // If a single topic is selected, check only that one
+            checkbox.checked = (topicId === currentTopic);
+        }
+    });
+    
+    // Also update the delete button state
+    updateDeleteTopicsButton();
+}
+
+// Function to sync the current view with the dropdown selection
+function syncTopicDropdownWithCurrentView() {
+    // If we're viewing a specific topic, make sure it's selected in the dropdown
+    if (currentTopic !== 'all' && currentTopic !== 'multiple') {
+        // Find the topic name for the current topic ID
+        const topic = topics.find(t => t.id == currentTopic);
+        if (topic) {
+            // Update the button text to show the current topic
+            document.getElementById('currentTopicName').textContent = topic.name;
+            
+            // Update the dropdown selection
+            updateDocumentManagementTopicSelection();
+        }
+    }
+}
+
+// --- End Topic Selection Synchronization ---
+
+// --- Chat Topic Management ---
+function checkAndSwitchChatTopicIfDeleted() {
+    console.log('[DEBUG] Checking if deleted topics need chat switching...');
+    
+    // Get the current chat topic selection
+    const chatTopicsMenu = document.getElementById('chatTopicsDropdownMenu');
+    if (!chatTopicsMenu) {
+        console.log('[DEBUG] Chat topics menu not found!');
+        return;
+    }
+    
+    // Check if any of the currently selected chat topics still exist
+    const checkedTopics = chatTopicsMenu.querySelectorAll('.form-check-input:checked');
+    let hasValidTopics = false;
+    let deletedTopics = [];
+    
+    console.log(`[DEBUG] Checking ${checkedTopics.length} selected chat topics...`);
+    console.log(`[DEBUG] Available topics:`, topics.map(t => ({id: t.id, name: t.name})));
+    console.log(`[DEBUG] Current chat session key: ${currentChatSessionKey}`);
+    
+    // Also check the currentChatSessionKey to see what topic we're actually on
+    if (currentChatSessionKey && currentChatSessionKey.startsWith('topics:')) {
+        const sessionTopicId = currentChatSessionKey.split(':')[1];
+        console.log(`[DEBUG] Current chat session topic ID: ${sessionTopicId}`);
+        
+        if (sessionTopicId !== 'all') {
+            const sessionTopicExists = topics.some(t => t.id == sessionTopicId);
+            console.log(`[DEBUG] Session topic ${sessionTopicId} exists: ${sessionTopicExists}`);
+            
+            if (!sessionTopicExists) {
+                deletedTopics.push(sessionTopicId);
+                console.log(`[DEBUG] Session topic ${sessionTopicId} was deleted (from session key)`);
+            }
+        }
+    }
+    
+    checkedTopics.forEach(checkbox => {
+        const topicValue = checkbox.value;
+        console.log(`[DEBUG] Checking topic value: ${topicValue}`);
+        
+        if (topicValue === 'all') {
+            hasValidTopics = true;
+            console.log(`[DEBUG] Topic ${topicValue} is special (all)`);
+        } else {
+            // Check if this topic still exists in the topics array
+            const topicExists = topics.some(t => t.id == topicValue);
+            console.log(`[DEBUG] Topic ${topicValue} exists: ${topicExists}`);
+            
+            if (topicExists) {
+                hasValidTopics = true;
+            } else {
+                deletedTopics.push(topicValue);
+                console.log(`[DEBUG] Topic ${topicValue} was deleted`);
+            }
+        }
+    });
+    
+    console.log(`[DEBUG] Deleted topics found: ${deletedTopics.length}`, deletedTopics);
+    
+    // If we have deleted topics, clear their chat history and switch to All Topics
+    if (deletedTopics.length > 0) {
+        console.log(`[DEBUG] Clearing chat history for deleted topics: ${deletedTopics}`);
+        
+        // Clear chat history for deleted topics
+        deletedTopics.forEach(topicId => {
+            const sessionKey = `topics:${topicId}`;
+            if (chatHistories[sessionKey]) {
+                delete chatHistories[sessionKey];
+                console.log(`[DEBUG] Deleted chat history for session: ${sessionKey}`);
+            }
+        });
+        
+        // Uncheck all topics
+        checkedTopics.forEach(checkbox => {
+            checkbox.checked = false;
+        });
+        
+        // Check "All Topics"
+        const allTopicsCheckbox = chatTopicsMenu.querySelector('#chatTopic_all');
+        if (allTopicsCheckbox) {
+            allTopicsCheckbox.checked = true;
+        }
+        
+        // Update the chat input state
+        updateChatInputState();
+        
+        // Update the chat session
+        currentChatSessionKey = 'topics:all';
+        
+        // Display the updated chat history
+        displayChatHistory(currentChatSessionKey);
+        
+        // Force refresh the chat area to ensure it shows the new state
+        forceRefreshChatDisplay();
+        
+        addLogMessage('📂 Switched to All Topics (previous topic was deleted)');
+        
+        console.log('[DEBUG] Successfully switched to All Topics');
+    }
+}
+
+// --- End Chat Topic Management ---
+
+// --- Force Topic Selection ---
+function forceSelectTopicInDropdown(topicId) {
+    console.log(`[DEBUG] Force selecting topic ${topicId} in dropdown`);
+    
+    // Try multiple selectors to find the checkbox
+    const selectors = [
+        `#doc_topic_${topicId}`,
+        `input[value="${topicId}"].topic-checkbox`,
+        `input[value="${topicId}"]`
+    ];
+    
+    let checkbox = null;
+    for (const selector of selectors) {
+        checkbox = document.querySelector(selector);
+        if (checkbox) {
+            console.log(`[DEBUG] Found checkbox with selector: ${selector}`);
+            break;
+        }
+    }
+    
+    if (checkbox) {
+        // Uncheck all other topics first
+        const allCheckboxes = document.querySelectorAll('.topic-checkbox');
+        allCheckboxes.forEach(cb => {
+            cb.checked = false;
+        });
+        
+        // Check the new topic
+        checkbox.checked = true;
+        console.log(`[DEBUG] Successfully checked topic ${topicId}`);
+        
+        // Update the selected topics array
+        selectedTopics = [topicId];
+        
+        // Update the button text
+        const topic = topics.find(t => t.id == topicId);
+        if (topic) {
+            document.getElementById('currentTopicName').textContent = topic.name;
+        }
+        
+        // Update the delete button state
+        updateDeleteTopicsButton();
+        
+        // Trigger change event to update the UI
+        checkbox.dispatchEvent(new Event('change'));
+    } else {
+        console.log(`[DEBUG] Could not find checkbox for topic ${topicId}`);
+        console.log(`[DEBUG] Available checkboxes:`, document.querySelectorAll('.topic-checkbox'));
+    }
+}
+
+// --- End Force Topic Selection ---
+
+// --- Chat Display Management ---
+function forceRefreshChatDisplay() {
+    console.log('[DEBUG] Force refreshing chat display...');
+    
+    // Clear the chat messages area
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.innerHTML = '';
+    }
+    
+    // Force a complete refresh of the chat display
+    if (currentChatSessionKey) {
+        displayChatHistory(currentChatSessionKey);
+    }
+    
+    // Update the chat input state
+    updateChatInputState();
+    
+    console.log('[DEBUG] Chat display refreshed');
+}
+
+// --- End Chat Display Management ---
+
+// --- Force Topic Switching ---
+function forceSwitchToAllTopicsIfNeeded() {
+    console.log('[DEBUG] Force switching to All Topics if needed...');
+    
+    // Check if currentChatSessionKey is on a deleted topic
+    if (currentChatSessionKey && currentChatSessionKey.startsWith('topics:')) {
+        const sessionTopicId = currentChatSessionKey.split(':')[1];
+        
+        if (sessionTopicId !== 'all') {
+            const topicExists = topics.some(t => t.id == sessionTopicId);
+            
+            if (!topicExists) {
+                console.log(`[DEBUG] Force switching from deleted topic ${sessionTopicId} to All Topics`);
+                
+                // Force uncheck all chat topic checkboxes
+                const chatTopicsMenu = document.getElementById('chatTopicsDropdownMenu');
+                if (chatTopicsMenu) {
+                    const allChatCheckboxes = chatTopicsMenu.querySelectorAll('.form-check-input');
+                    allChatCheckboxes.forEach(cb => {
+                        cb.checked = false;
+                    });
+                    
+                    // Check "All Topics"
+                    const allTopicsCheckbox = chatTopicsMenu.querySelector('#chatTopic_all');
+                    if (allTopicsCheckbox) {
+                        allTopicsCheckbox.checked = true;
+                    }
+                }
+                
+                // Update the chat session
+                currentChatSessionKey = 'topics:all';
+                
+                // Clear the chat display
+                const chatMessages = document.getElementById('chatMessages');
+                if (chatMessages) {
+                    chatMessages.innerHTML = '';
+                }
+                
+                // Display All Topics chat history
+                displayChatHistory(currentChatSessionKey);
+                
+                // Update chat input state
+                updateChatInputState();
+                
+                console.log('[DEBUG] Successfully forced switch to All Topics');
+            }
+        }
+    }
+}
+
+// --- End Force Topic Switching ---
+
+// --- Fix Chat Topic Selection ---
+function fixChatTopicSelectionAfterDeletion() {
+    console.log('[DEBUG] Fixing chat topic selection after deletion...');
+    
+    // Get all chat topic checkboxes
+    const chatTopicsMenu = document.getElementById('chatTopicsDropdownMenu');
+    if (!chatTopicsMenu) {
+        console.log('[DEBUG] Chat topics menu not found for fixing');
+        return;
+    }
+    
+    const chatCheckboxes = chatTopicsMenu.querySelectorAll('.form-check-input');
+    let hasValidSelection = false;
+    let needsFix = false;
+    
+    // Check each checkbox
+    chatCheckboxes.forEach(checkbox => {
+        const topicValue = checkbox.value;
+        
+        if (checkbox.checked) {
+            if (topicValue === 'all') {
+                hasValidSelection = true;
+            } else {
+                // Check if this topic still exists
+                const topicExists = topics.some(t => t.id == topicValue);
+                if (!topicExists) {
+                    console.log(`[DEBUG] Found checked deleted topic: ${topicValue}, unchecking`);
+                    checkbox.checked = false;
+                    needsFix = true;
+                } else {
+                    hasValidSelection = true;
+                }
+            }
+        }
+    });
+    
+    // If no valid selection or we need to fix, switch to All Topics
+    if (!hasValidSelection || needsFix) {
+        console.log('[DEBUG] No valid selection or need fix, switching to All Topics');
+        
+        // Uncheck all
+        chatCheckboxes.forEach(cb => {
+            cb.checked = false;
+        });
+        
+        // Check All Topics
+        const allTopicsCheckbox = chatTopicsMenu.querySelector('#chatTopic_all');
+        if (allTopicsCheckbox) {
+            allTopicsCheckbox.checked = true;
+            console.log('[DEBUG] Checked All Topics checkbox');
+        }
+        
+        // Update session
+        currentChatSessionKey = 'topics:all';
+        
+        // Clear and refresh chat
+        const chatMessages = document.getElementById('chatMessages');
+        if (chatMessages) {
+            chatMessages.innerHTML = '';
+        }
+        
+        displayChatHistory(currentChatSessionKey);
+        updateChatInputState();
+        
+        console.log('[DEBUG] Successfully fixed chat topic selection');
+    }
+}
+
+// --- End Fix Chat Topic Selection ---
 
 // Comment out delete animation usage
 // const stopAnimation = showDeleteAnimation();
@@ -3032,9 +4696,9 @@ function showSortOrderPopup(arrow, col, idx) {
 // --- Patch chat send logic ---
 function getSelectedChatTopicIds() {
     const menu = document.getElementById('chatTopicsDropdownMenu');
-    if (!menu) return ['none'];
+            if (!menu) return ['all'];
     const checked = menu.querySelectorAll('.form-check-input:checked');
-    if (checked.length === 0) return ['none'];
+            if (checked.length === 0) return ['all'];
     return Array.from(checked).map(cb => cb.value);
 }
 function getCurrentChatSessionKey() {
@@ -3085,7 +4749,7 @@ function sendChatQuestion() {
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
         if (data.error) {
-            addMessage('❌ Error: ' + data.error, 'ai');
+            addMessage('❌ Error: ' + data.error, 'ai', false);
         } else {
             // Create the AI response container
             let aiResponse = '🤖 <strong>AI:</strong> ';
@@ -3097,9 +4761,9 @@ function sendChatQuestion() {
             aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
             
             // Add confidence if available
-            if (data.confidence) {
-                aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
-            }
+            //if (data.confidence) {
+            //    aiResponse += '<br><strong>Confidence:</strong> ' + data.confidence + '%';
+            //}
             
             // Add sources if available
             if (data.sources) {
@@ -3110,7 +4774,20 @@ function sendChatQuestion() {
                 }
             }
             
-            addMessage(aiResponse, 'ai');
+            // Add safety and hallucination information
+            if (data.safety_issues && data.safety_issues.length > 0) {
+                aiResponse += '<br><span class="safety-warning" style="color: #d32f2f; font-weight: bold;">⚠️ SAFETY ISSUE: ' + data.safety_issues.join(', ') + '</span>';
+            }
+            
+            if (data.is_hallucination) {
+                aiResponse += '<br><span class="safety-warning" style="color: #f57c00; font-weight: bold;">⚠️ HALLUCINATION DETECTED: This answer may contain information not directly supported by the provided documents. Please verify with official sources.</span>';
+            }
+            
+            if (data.hallucination_score > 0.3) {
+                aiResponse += '<br><span class="hallucination-score" style="color: #f57c00;">🔍 Hallucination Risk Score: ' + (data.hallucination_score * 100).toFixed(1) + '%</span>';
+            }
+            
+            addMessage(aiResponse, 'ai', true);
             // Update chatHistories cache for this session
             if (!window.chatHistories) window.chatHistories = {};
             if (!window.chatHistories[session_key]) window.chatHistories[session_key] = [];
@@ -3120,7 +4797,7 @@ function sendChatQuestion() {
     .catch(error => {
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
-        addMessage('❌ Error: ' + error, 'ai');
+        addMessage('❌ Error: ' + error, 'ai', false);
     });
 }
 
@@ -3142,7 +4819,7 @@ window.addEventListener('DOMContentLoaded', function() {
                 if (checked.length > 0) {
                     topicDropdownMenu.querySelector('.topic-checkbox[value="all"]').checked = false;
                 }
-                // If none checked, check All Topics
+                // If nothing checked, check All Topics
                 const anyChecked = Array.from(checkboxes).some(cb => cb.value !== 'all' && cb.checked);
                 if (!anyChecked) {
                     topicDropdownMenu.querySelector('.topic-checkbox[value="all"]').checked = true;
@@ -3288,8 +4965,49 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Menu found on load:', menu);
     setTimeout(updateUploadQuestionnaireButton, 200); // Delay to ensure DOM is ready
     
-    // Check user status on page load to set guest user flag
-    checkUserStatus();
+    // Set shared user status on page load
+    setSharedUserStatus();
+    
+    // Add integrity check button event listener
+    const checkIntegrityBtn = document.getElementById('checkIntegrityBtn');
+    if (checkIntegrityBtn) {
+        checkIntegrityBtn.addEventListener('click', function() {
+            addLogMessage('🔍 Checking database integrity...');
+            
+            fetch('/check_database_integrity', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const status = data.status;
+                    const message = data.message;
+                    
+                    if (status === 'valid') {
+                        addLogMessage(`✅ Database integrity: ${message}`);
+                    } else if (status === 'minor_issues' || status === 'moderate_issues') {
+                        addLogMessage(`⚠️ Database integrity: ${message}`);
+                    } else if (status === 'fixed') {
+                        addLogMessage(`🔧 Database integrity: ${message}`);
+                    } else if (status === 'rebuilt') {
+                        addLogMessage(`🔄 Database integrity: ${message}`);
+                    } else if (status === 'skipped') {
+                        addLogMessage(`⏭️ Database integrity: ${message}`);
+                    } else {
+                        addLogMessage(`❓ Database integrity: ${message}`);
+                    }
+                } else {
+                    addLogMessage(`❌ Database integrity check failed: ${data.error}`);
+                }
+            })
+            .catch(error => {
+                addLogMessage(`❌ Error checking database integrity: ${error}`);
+            });
+        });
+    }
 });
 // ... existing code ...
 
@@ -3313,24 +5031,24 @@ function updateUploadQuestionnaireButton() {
         console.log(`Checked checkbox ${index}: value="${cb.value}", id="${cb.id}"`);
     });
     
-    // No topics selected - improved logic
-    const hasValidTopics = Array.from(checked).some(cb => cb.value !== 'none');
-    console.log('Has valid topics:', hasValidTopics);
-    
-    if (!hasValidTopics) {
-        console.log('No valid topics selected, disabling button');
-        batchQnAButton.disabled = true;
-        batchQnAButton.classList.add('disabled-btn');
-        batchQnAButton.setAttribute('title', 'Select topics with documents to enable Upload Questionnaire');
-        batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Topics)';
-        return;
-    }
+            // Check if topics are selected
+        const hasValidTopics = Array.from(checked).some(cb => cb.value !== 'none');
+        console.log('Has valid topics:', hasValidTopics);
+        
+        if (!hasValidTopics) {
+            console.log('No valid topics selected, disabling button');
+            batchQnAButton.disabled = true;
+            batchQnAButton.classList.add('disabled-btn');
+            batchQnAButton.setAttribute('title', 'Select topics with documents to enable Upload Questionnaire');
+            batchQnAButton.innerHTML = '<i class="fas fa-question-circle"></i> Upload Questionnaire (No Documents)';
+            return;
+        }
     
     console.log('Valid topics found, proceeding with document check');
     
     // Get selected topic IDs
     const selectedTopicIds = Array.from(checked)
-        .filter(cb => cb.value !== 'none' && cb.value !== 'all')
+        .filter(cb => cb.value !== 'all')
         .map(cb => parseInt(cb.value)).filter(id => !isNaN(id));
     
     // Check if 'All Topics' is selected
@@ -3518,6 +5236,9 @@ function monitorQuestionnaireProgress(jobId) {
                 addLogMessage(`✅ Questionnaire processing complete!`);
                 addLogMessage(`📊 Processed ${data.completed_questions} questions successfully`);
                 
+                // End questionnaire mode and show IDK alert if needed
+                endQuestionnaireMode();
+                
                 // Show download link
                 showQuestionnaireResults(jobId);
             } else if (data.status === 'error') {
@@ -3603,6 +5324,446 @@ function showQuestionnaireResults(jobId) {
         addLogMessage(`❌ Error fetching results: ${error}`);
     });
 }
+
+// --- BEGIN: Chat input state control based on topic selection ---
+function updateChatInputState() {
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    const questionInput = document.getElementById('questionInput');
+    const askButton = document.getElementById('askButton');
+    
+    console.log('=== updateChatInputState called ===');
+    console.log('Menu element:', menu);
+    console.log('Question input element:', questionInput);
+    console.log('Ask button element:', askButton);
+    
+    if (!menu || !questionInput || !askButton) {
+        console.log('Chat input elements not found!');
+        return;
+    }
+    
+    const checked = menu.querySelectorAll('.form-check-input:checked');
+    console.log('Checked checkboxes count:', checked.length);
+    
+    // Log each checked checkbox
+    Array.from(checked).forEach((cb, index) => {
+        console.log(`Checked checkbox ${index}: value="${cb.value}", id="${cb.id}"`);
+    });
+    
+            // Check if valid topics are selected
+        const hasAllTopics = Array.from(checked).some(cb => cb.value === 'all');
+        const hasSpecificTopics = Array.from(checked).some(cb => cb.value !== 'all');
+        
+        console.log('Has all-topics:', hasAllTopics, 'Has specific topics:', hasSpecificTopics);
+        
+        if (!hasAllTopics && !hasSpecificTopics) {
+            // Disable chat input and send button when no valid topics are selected
+            console.log('No valid topics selected, disabling chat input');
+        questionInput.disabled = true;
+        questionInput.readOnly = true;
+        askButton.disabled = true;
+        questionInput.classList.add('disabled-chat-input');
+        askButton.classList.add('disabled-chat-input');
+        questionInput.setAttribute('title', 'Select topics to enable chat');
+        askButton.setAttribute('title', 'Select topics to enable chat');
+        questionInput.placeholder = 'Select topics to enable chat...';
+        
+        console.log('Chat input disabled. Input disabled:', questionInput.disabled, 'Button disabled:', askButton.disabled);
+    } else {
+        // Enable chat input and send button when valid topics are selected
+        console.log('Valid topics selected, enabling chat input');
+        questionInput.disabled = false;
+        questionInput.readOnly = false;
+        askButton.disabled = false;
+        questionInput.classList.remove('disabled-chat-input');
+        askButton.classList.remove('disabled-chat-input');
+        questionInput.removeAttribute('title');
+        askButton.removeAttribute('title');
+        questionInput.placeholder = 'Ask your compliance question...';
+        
+        console.log('Chat input enabled. Input disabled:', questionInput.disabled, 'Button disabled:', askButton.disabled);
+    }
+    
+            console.log('=== updateChatInputState completed ===');
+        
+        // Also update the Upload Questionnaire button state
+        updateUploadQuestionnaireButton();
+}
+// ... existing code ...
+
+// --- BEGIN: Clear History Modal Functions ---
+function showClearHistoryModal() {
+    // Get all available topics dynamically
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    if (!menu) return;
+    
+    // Get individual topics (excluding 'all')
+    const individualTopics = Array.from(menu.querySelectorAll('.form-check-input:not([value="all"])'));
+    const allTopicsCheckbox = menu.querySelector('.form-check-input[value="all"]');
+    
+    // Populate individual topics dynamically
+    const individualContainer = document.getElementById('individualTopicsCheckboxes');
+    individualContainer.innerHTML = '';
+    
+    if (individualTopics.length > 0) {
+        individualTopics.forEach(topic => {
+            const label = menu.querySelector(`label[for="chatTopic_${topic.value}"]`);
+            if (label) {
+                const div = document.createElement('div');
+                div.className = 'form-check';
+                div.innerHTML = `
+                    <input class="form-check-input clear-history-topic" type="checkbox" value="${topic.value}" id="clear_individual_${topic.value}">
+                    <label class="form-check-label" for="clear_individual_${topic.value}">
+                        ${label.textContent}
+                    </label>
+                `;
+                individualContainer.appendChild(div);
+            }
+        });
+    } else {
+        individualContainer.innerHTML = '<p class="text-muted text-center">No individual topics found</p>';
+    }
+    
+    // Populate topic combinations dynamically based on existing chat history
+    const combinationContainer = document.getElementById('combinationTopicsCheckboxes');
+    combinationContainer.innerHTML = '<p class="text-muted text-center"><i class="fas fa-spinner fa-spin"></i> Loading topic combinations...</p>';
+    
+    // Add "All Topics" option if it exists
+    if (allTopicsCheckbox) {
+        const div = document.createElement('div');
+        div.className = 'form-check';
+        div.innerHTML = `
+            <input class="form-check-input clear-history-topic" type="checkbox" value="all" id="clear_combination_all">
+            <label class="form-check-label" for="clear_combination_all">
+                All Topics
+            </label>
+        `;
+        combinationContainer.appendChild(div);
+    }
+    
+    // Fetch existing topic combinations from the database
+    fetchExistingTopicCombinations().then(existingCombinations => {
+        // Clear the loading message
+        combinationContainer.innerHTML = '';
+        
+        // Re-add "All Topics" option if it was cleared
+        if (allTopicsCheckbox) {
+            const div = document.createElement('div');
+            div.className = 'form-check';
+            div.innerHTML = `
+                <input class="form-check-input clear-history-topic" type="checkbox" value="all" id="clear_combination_all">
+                <label class="form-check-label" for="clear_combination_all">
+                    All Topics
+                </label>
+            `;
+            combinationContainer.appendChild(div);
+        }
+        
+        if (existingCombinations && existingCombinations.length > 0) {
+            existingCombinations.forEach(combo => {
+                const div = document.createElement('div');
+                div.className = 'form-check';
+                div.innerHTML = `
+                    <input class="form-check-input clear-history-topic" type="checkbox" value="${combo.session_key}" id="clear_combination_${combo.session_key.replace(/[^a-zA-Z0-9]/g, '_')}">
+                    <label class="form-check-label" for="clear_combination_${combo.session_key.replace(/[^a-zA-Z0-9]/g, '_')}">
+                        ${combo.display_name}
+                        ${combo.message_count > 0 ? `<span class="badge bg-secondary ms-2">${combo.message_count} messages</span>` : ''}
+                    </label>
+                `;
+                combinationContainer.appendChild(div);
+            });
+        } else {
+            // Show "No combinations found" message
+            combinationContainer.innerHTML = '<p class="text-muted text-center">No topic combinations found in chat history</p>';
+        }
+        
+        // Re-attach event listeners for the new checkboxes
+        document.querySelectorAll('.clear-history-topic').forEach(cb => {
+            cb.addEventListener('change', updateClearHistoryButton);
+        });
+        
+    }).catch(error => {
+        console.error('Error fetching topic combinations:', error);
+        combinationContainer.innerHTML = '<p class="text-muted text-center text-danger">Error loading topic combinations</p>';
+    });
+    
+    // Add event listeners for select/deselect all
+    document.getElementById('selectAllTopicsBtn').addEventListener('click', function() {
+        document.querySelectorAll('.clear-history-topic').forEach(cb => cb.checked = true);
+        updateClearHistoryButton();
+    });
+    
+    document.getElementById('deselectAllTopicsBtn').addEventListener('click', function() {
+        document.querySelectorAll('.clear-history-topic').forEach(cb => cb.checked = false);
+        updateClearHistoryButton();
+    });
+    
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('clearHistoryModal'));
+    modal.show();
+    
+    // Initialize button state
+    updateClearHistoryButton();
+    
+    // Add modal event listener to refresh content when shown
+    modal._element.addEventListener('shown.bs.modal', function() {
+        // Refresh content when modal is shown to ensure latest topics
+        refreshModalContent();
+    });
+}
+
+function updateClearHistoryButton() {
+    const checkedTopics = document.querySelectorAll('.clear-history-topic:checked');
+    const confirmBtn = document.getElementById('confirmClearHistoryBtn');
+    
+    if (checkedTopics.length > 0) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `Clear ${checkedTopics.length} Selected History`;
+    } else {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Clear Selected Histories';
+    }
+}
+
+// Add event listener for confirm clear button
+document.addEventListener('DOMContentLoaded', function() {
+    const confirmClearBtn = document.getElementById('confirmClearHistoryBtn');
+    if (confirmClearBtn) {
+        confirmClearBtn.addEventListener('click', function() {
+            const selectedTopics = Array.from(document.querySelectorAll('.clear-history-topic:checked')).map(cb => cb.value);
+            
+            if (selectedTopics.length === 0) {
+                alert('Please select at least one topic to clear.');
+                return;
+            }
+            
+            // Show final confirmation
+            const topicNames = selectedTopics.map(topic => {
+                if (topic === 'all') return 'All Topics';
+                if (topic.startsWith('clear_individual_')) return topic.replace('clear_individual_', '');
+                if (topic.startsWith('clear_combination_')) return topic.replace('clear_combination_', '');
+                return topic;
+            }).join(', ');
+            
+            if (confirm(`Are you sure you want to clear chat history for: ${topicNames}?\n\nThis action cannot be undone.`)) {
+                clearSelectedHistories(selectedTopics);
+            }
+        });
+    }
+});
+
+function clearSelectedHistories(selectedTopics) {
+    // Show loading state
+    const confirmBtn = document.getElementById('confirmClearHistoryBtn');
+    const originalText = confirmBtn.innerHTML;
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Clearing...';
+    
+    // Send request to clear selected histories
+    fetch('/clear_history', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            topics: selectedTopics
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('clearHistoryModal'));
+            modal.hide();
+            
+            // Show success message
+            addLogMessage(`✅ Chat history cleared for selected topics: ${selectedTopics.join(', ')}`);
+            
+            // Refresh chat history for current session
+            if (window.currentChatSessionKey) {
+                fetchChatHistory(window.currentChatSessionKey);
+            }
+        } else {
+            alert('Error: ' + (data.error || 'Failed to clear history'));
+        }
+    })
+    .catch(error => {
+        alert('Error clearing history: ' + error);
+    })
+    .finally(() => {
+        // Restore button state
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = originalText;
+    });
+}
+
+// --- END: Clear History Modal Functions ---
+
+// --- BEGIN: Topic Combination Fetching Functions ---
+function fetchExistingTopicCombinations() {
+    return fetch('/get_existing_topic_combinations')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch topic combinations');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success' && data.combinations) {
+                return data.combinations.map(combo => {
+                    // Convert session key to readable display name using actual topic names
+                    let displayName = 'Unknown';
+                    if (combo.session_key === 'topics:all') {
+                        displayName = 'All Topics';
+                    } else if (combo.session_key.startsWith('topics:')) {
+                        const topicIds = combo.session_key.replace('topics:', '').split(',');
+                        if (topicIds.length === 1) {
+                            // Get the actual topic name from the existing topic data
+                            const topicName = getTopicNameById(topicIds[0]);
+                            displayName = topicName || `Topic ${topicIds[0]}`;
+                        } else {
+                            // Get actual topic names for combinations
+                            const topicNames = topicIds.map(id => getTopicNameById(id)).filter(name => name);
+                            if (topicNames.length > 0) {
+                                displayName = topicNames.join(' + ');
+                            } else {
+                                displayName = `Topics ${topicIds.join(', ')}`;
+                            }
+                        }
+                    }
+                    
+                    return {
+                        session_key: combo.session_key,
+                        display_name: displayName,
+                        message_count: combo.message_count || 0
+                    };
+                }).filter(combo => combo.display_name !== 'Unknown'); // Filter out invalid combinations
+            }
+            return [];
+        })
+        .catch(error => {
+            console.error('Error fetching topic combinations:', error);
+            return [];
+        });
+}
+
+// --- END: Topic Combination Fetching Functions ---
+
+// --- BEGIN: Helper Functions ---
+function getTopicNameById(topicId) {
+    // Get topic name from the existing topic dropdown menu
+    const menu = document.getElementById('chatTopicsDropdownMenu');
+    if (!menu) return null;
+    
+    const label = menu.querySelector(`label[for="chatTopic_${topicId}"]`);
+    return label ? label.textContent : null;
+}
+
+// --- END: Helper Functions ---
+
+// --- BEGIN: Real-time Topic Update Functions ---
+function refreshClearHistoryModal() {
+    // If the modal is currently open, refresh its content
+    const modal = document.getElementById('clearHistoryModal');
+    if (modal && modal.classList.contains('show')) {
+        showClearHistoryModal();
+    }
+}
+
+// Function to be called when topics are updated (create/delete)
+function onTopicsUpdated() {
+    // Refresh the clear history modal if it's open
+    refreshClearHistoryModal();
+    
+    // Also refresh the main topic dropdown
+    if (window.refreshTopicsDropdown) {
+        window.refreshTopicsDropdown();
+    }
+}
+
+// Make the function globally accessible for external calls
+window.onTopicsUpdated = onTopicsUpdated;
+window.refreshClearHistoryModal = refreshClearHistoryModal;
+
+// --- END: Real-time Topic Update Functions ---
+
+// --- BEGIN: Modal Content Refresh Functions ---
+function refreshModalContent() {
+    // Refresh the modal content to show latest topics
+    const individualContainer = document.getElementById('individualTopicsCheckboxes');
+    const combinationContainer = document.getElementById('combinationTopicsCheckboxes');
+    
+    if (individualContainer && combinationContainer) {
+        // Re-populate individual topics
+        const menu = document.getElementById('chatTopicsDropdownMenu');
+        if (menu) {
+            const individualTopics = Array.from(menu.querySelectorAll('.form-check-input:not([value="all"])'));
+            individualContainer.innerHTML = '';
+            
+            if (individualTopics.length > 0) {
+                individualTopics.forEach(topic => {
+                    const label = menu.querySelector(`label[for="chatTopic_${topic.value}"]`);
+                    if (label) {
+                        const div = document.createElement('div');
+                        div.className = 'form-check';
+                        div.innerHTML = `
+                            <input class="form-check-input clear-history-topic" type="checkbox" value="${topic.value}" id="clear_individual_${topic.value}">
+                            <label class="form-check-label" for="clear_individual_${topic.value}">
+                                ${label.textContent}
+                            </label>
+                        `;
+                        individualContainer.appendChild(div);
+                    }
+                });
+            } else {
+                individualContainer.innerHTML = '<p class="text-muted text-center">No individual topics found</p>';
+            }
+        }
+        
+        // Re-fetch and populate combinations
+        fetchExistingTopicCombinations().then(existingCombinations => {
+            combinationContainer.innerHTML = '';
+            
+            // Re-add "All Topics" option
+            const allTopicsCheckbox = menu.querySelector('.form-check-input[value="all"]');
+            if (allTopicsCheckbox) {
+                const div = document.createElement('div');
+                div.className = 'form-check';
+                div.innerHTML = `
+                    <input class="form-check-input clear-history-topic" type="checkbox" value="all" id="clear_combination_all">
+                    <label class="form-check-label" for="clear_combination_all">
+                        All Topics
+                    </label>
+                `;
+                combinationContainer.appendChild(div);
+            }
+            
+            if (existingCombinations && existingCombinations.length > 0) {
+                existingCombinations.forEach(combo => {
+                    const div = document.createElement('div');
+                    div.className = 'form-check';
+                    div.innerHTML = `
+                        <input class="form-check-input clear-history-topic" type="checkbox" value="${combo.session_key}" id="clear_combination_${combo.session_key.replace(/[^a-zA-Z0-9]/g, '_')}">
+                        <label class="form-check-label" for="clear_combination_${combo.session_key.replace(/[^a-zA-Z0-9]/g, '_')}">
+                            ${combo.display_name}
+                            ${combo.message_count > 0 ? `<span class="badge bg-secondary ms-2">${combo.message_count} messages</span>` : ''}
+                        </label>
+                    `;
+                    combinationContainer.appendChild(div);
+                });
+            } else {
+                combinationContainer.innerHTML = '<p class="text-muted text-center">No topic combinations found in chat history</p>';
+            }
+            
+            // Re-attach event listeners
+            document.querySelectorAll('.clear-history-topic').forEach(cb => {
+                cb.addEventListener('change', updateClearHistoryButton);
+            });
+        });
+    }
+}
+
+// --- END: Modal Content Refresh Functions ---
+
     </script>
 </body>
 </html> 
