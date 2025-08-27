@@ -248,6 +248,21 @@
             white-space: pre-wrap;
             word-break: break-word;
         }
+        
+        .detailed-toggle {
+            cursor: pointer;
+            color: #007bff;
+            text-decoration: underline;
+            font-weight: 500;
+            margin-left: 10px;
+            user-select: none;
+            transition: color 0.2s ease;
+        }
+        
+        .detailed-toggle:hover {
+            color: #0056b3;
+            text-decoration: none;
+        }
         .upload-anim, .delete-anim {
             position: relative;
             width: 750px;
@@ -2131,7 +2146,7 @@ function askQuestion() {
             aiResponse += '<span class="helpful-answer">' + data.answer + '</span>';
             
             // Always show the detailed answer toggle
-            aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
+            // aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
             
             // Add confidence if available
             //if (data.confidence) {
@@ -2141,7 +2156,7 @@ function askQuestion() {
             // Add sources if available
             if (data.sources) {
                 if (typeof data.sources === 'object' && data.sources.summary && data.sources.detailed) {
-                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span>';
+                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <!-- <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span> -->';
                 } else {
                     aiResponse += '<br><strong>Sources:</strong> ' + data.sources;
                 }
@@ -4811,7 +4826,7 @@ function sendChatQuestion() {
             aiResponse += '<span class="helpful-answer">' + data.answer + '</span>';
             
             // Always show the detailed answer toggle
-            aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
+            // aiResponse += ' <span class="detailed-toggle" onclick="toggleDetailedAnswer(this)" data-detailed="' + (data.detailed_answer || '').replace(/"/g, '&quot;').replace(/\n/g, '<br>') + '">Detailed Answer ▼</span>';
             
             // Add confidence if available
             //if (data.confidence) {
@@ -4821,7 +4836,7 @@ function sendChatQuestion() {
             // Add sources if available
             if (data.sources) {
                 if (typeof data.sources === 'object' && data.sources.summary && data.sources.detailed) {
-                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span>';
+                    aiResponse += '<br><strong>Sources:</strong> <span class="source-summary">' + data.sources.summary + '</span> <!-- <span class="source-toggle" onclick="toggleSourceDetails(this)" data-detailed="' + data.sources.detailed.replace(/"/g, '&quot;') + '">▼</span> -->';
                 } else {
                     aiResponse += '<br><strong>Sources:</strong> ' + data.sources;
                 }
