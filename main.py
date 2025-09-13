@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify, session, send_file
 import os
+from datetime import datetime
 from ai_bot import AIApp
 from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, POSTGRES_PASSWORD
 # UPLOAD_PIN commented out for now
@@ -82,6 +83,12 @@ DATABASE_URL = f'postgresql://postgres:{POSTGRES_PASSWORD}@localhost:5432/chat_h
 
 # Global progress tracking for questionnaire processing
 questionnaire_progress = {}
+
+# Global cancellation tracking for active queries
+active_queries = {}
+
+# Import shared cancellation state from ai_bot
+from ai_bot import _cancelled_queries, mark_query_cancelled, clear_cancelled_query
 
 def cleanup_old_progress():
     """Clean up old progress entries to prevent memory leaks"""
@@ -170,9 +177,18 @@ def init_db():
             confidence REAL,
             sources TEXT,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            question_timestamp TIMESTAMP,
+            answer_timestamp TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
+    
+    # Add new timestamp columns if they don't exist (for existing databases)
+    try:
+        cursor.execute('ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS question_timestamp TIMESTAMP')
+        cursor.execute('ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS answer_timestamp TIMESTAMP')
+    except Exception as e:
+        print(f"Note: Could not add timestamp columns (may already exist): {e}")
     
     # Create topics table
     cursor.execute('''
@@ -233,7 +249,7 @@ def get_chat_history(limit=None, session_key=None):
     if session_key:
         # If session_key is provided, use it directly
         cursor.execute(f'''
-            SELECT question, answer, sources FROM chat_history 
+            SELECT question, answer, sources, question_timestamp, answer_timestamp FROM chat_history 
             WHERE session_id = %s AND user_id = %s
             ORDER BY timestamp {order} 
             {limit_clause}
@@ -241,7 +257,7 @@ def get_chat_history(limit=None, session_key=None):
     else:
         # Get all chat history for the shared user
         cursor.execute(f'''
-            SELECT question, answer, sources FROM chat_history 
+            SELECT question, answer, sources, question_timestamp, answer_timestamp FROM chat_history 
             WHERE user_id = %s 
             ORDER BY timestamp {order} 
             {limit_clause}
@@ -253,15 +269,23 @@ def get_chat_history(limit=None, session_key=None):
         'question': row['question'], 
         'answer': row['answer'],
         #'confidence': row['confidence'],
-        'sources': row['sources']
+        'sources': row['sources'],
+        'question_timestamp': row['question_timestamp'],
+        'answer_timestamp': row['answer_timestamp']
     } for row in history]
 
-def save_chat_history(question, answer, sources, session_key=None):
+def save_chat_history(question, answer, sources, session_key=None, question_timestamp=None, answer_timestamp=None):
     """Save chat history to database for the shared user"""
     conn = get_db()
     cursor = conn.cursor()
     user_id = get_user_id()  # Always returns 1 (shared user)
     session_id = session_key if session_key else get_session_id()
+    
+    # Use current time if timestamps not provided
+    if question_timestamp is None:
+        question_timestamp = datetime.now()
+    if answer_timestamp is None:
+        answer_timestamp = datetime.now()
     
     #try:
     #    confidence = float(confidence) if confidence is not None else None
@@ -277,9 +301,9 @@ def save_chat_history(question, answer, sources, session_key=None):
         sources_str = str(sources) if sources else 'N/A'
     
     cursor.execute('''
-        INSERT INTO chat_history (user_id, session_id, question, answer, sources)
-        VALUES (%s, %s, %s, %s, %s)
-    ''', (user_id, session_id, question, answer, sources_str))
+        INSERT INTO chat_history (user_id, session_id, question, answer, sources, question_timestamp, answer_timestamp)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    ''', (user_id, session_id, question, answer, sources_str, question_timestamp, answer_timestamp))
     conn.commit()
     conn.close()
 
@@ -317,7 +341,12 @@ def get_or_init_ai_app():
         return ai_app
     
     # Quick check: if no documents exist, make AI app ready immediately
-    if not os.path.exists(DOCS_PATH) or not any(os.listdir(DOCS_PATH)):
+    try:
+        docs_exist = os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH))
+    except (OSError, PermissionError):
+        docs_exist = False
+    
+    if not docs_exist:
         add_backend_log("No documents found - making AI app ready immediately")
         try:
             ai_app = AIApp(None)
@@ -331,10 +360,34 @@ def get_or_init_ai_app():
         return ai_app
     
     # Quick check: if database already exists and is valid, try to load it immediately
+    # BUT: Force rebuild if embedding model has changed
     try:
         temp_ai_app = AIApp(None)
-        if temp_ai_app.database_exists_and_valid():
-            add_backend_log("Database exists - attempting quick load...")
+        
+        # Check if we need to force rebuild due to embedding model change
+        force_rebuild = False
+        try:
+            from Logistics_Files.config_details import EMBEDDING_MODEL
+            # Check if build_info.txt exists and compare embedding model
+            build_info_path = os.path.join(DB_PATH, 'build_info.txt')
+            if os.path.exists(build_info_path):
+                with open(build_info_path, 'r') as f:
+                    build_info = f.read().strip()
+                # If the build info doesn't contain the current embedding model, force rebuild
+                if EMBEDDING_MODEL not in build_info:
+                    add_backend_log(f"Embedding model changed from {build_info} to {EMBEDDING_MODEL} - forcing rebuild")
+                    force_rebuild = True
+                else:
+                    add_backend_log(f"Embedding model unchanged: {EMBEDDING_MODEL}")
+            else:
+                add_backend_log("No build info found - will rebuild database")
+                force_rebuild = True
+        except Exception as e:
+            add_backend_log(f"Error checking embedding model: {e} - will rebuild database")
+            force_rebuild = True
+        
+        if not force_rebuild and temp_ai_app.database_exists_and_valid():
+            add_backend_log("Database exists and embedding model unchanged - attempting quick load...")
             if temp_ai_app.load_vector_db() and temp_ai_app.db is not None:
                 ai_app = temp_ai_app
                 ai_app_ready = True
@@ -344,7 +397,10 @@ def get_or_init_ai_app():
             else:
                 add_backend_log("Quick load failed, will use background initialization")
         else:
-            add_backend_log("No valid database found, will use background initialization")
+            if force_rebuild:
+                add_backend_log("Forcing database rebuild due to embedding model change")
+            else:
+                add_backend_log("No valid database found, will use background initialization")
     except Exception as e:
         add_backend_log(f"Quick initialization check failed: {e}, will use background initialization")
     
@@ -550,10 +606,33 @@ def get_database_status():
         
         conn.close()
         
+        # Check if vector database is ready
+        global ai_app, ai_app_ready
+        if ai_app and ai_app.db and hasattr(ai_app.db, 'index'):
+            db_status = 'connected'
+            message = 'Connected'
+        elif ai_app_initializing:
+            db_status = 'building'
+            message = 'Building DB'
+        else:
+            db_status = 'building'
+            message = 'Building DB'
+        
+        # Add embedding model info to the response
+        embedding_info = {}
+        if ai_app and hasattr(ai_app, 'current_embedding_type'):
+            embedding_info = {
+                'embedding_type': ai_app.current_embedding_type,
+                'embedding_model': getattr(ai_app, 'bge_model', None) is not None,
+                'model_name': getattr(ai_app, 'bge_model', None).__class__.__name__ if hasattr(ai_app, 'bge_model') and ai_app.bge_model else None
+            }
+        
         return jsonify({
-            'status': 'connected',
+            'status': db_status,
             'database': 'postgresql',
-            'timestamp': datetime.now().isoformat()
+            'message': message,
+            'timestamp': datetime.now().isoformat(),
+            'embedding_info': embedding_info
         }), 200
         
     except Exception as e:
@@ -562,6 +641,7 @@ def get_database_status():
             'status': 'disconnected',
             'database': 'postgresql',
             'error': str(e),
+            'message': 'Disconnected',
             'timestamp': datetime.now().isoformat()
         }), 500
 
@@ -573,6 +653,105 @@ def user_status():
         'username': 'shared_user',
         'user_id': 1
     })
+
+@app.route('/test_embeddings', methods=['GET'])
+def test_embeddings():
+    """Test endpoint to check which embedding model is being used"""
+    global ai_app
+    
+    try:
+        if not ai_app:
+            return jsonify({
+                'status': 'error',
+                'message': 'AI app not initialized',
+                'embedding_info': None
+            }), 500
+        
+        embedding_info = {
+            'embedding_type': getattr(ai_app, 'current_embedding_type', 'Not set'),
+            'has_bge_model': hasattr(ai_app, 'bge_model'),
+            'bge_model_is_none': getattr(ai_app, 'bge_model', None) is None,
+            'embedding_class': type(ai_app.embedding).__name__ if hasattr(ai_app, 'embedding') else 'Not set',
+            'config_model': ai_app.config.get('EMBEDDING_MODEL', 'Not found') if hasattr(ai_app, 'config') else 'No config'
+        }
+        
+        # Try to get the actual model name from config_details
+        try:
+            from Logistics_Files.config_details import EMBEDDING_MODEL
+            embedding_info['config_embedding_model'] = EMBEDDING_MODEL
+        except ImportError:
+            embedding_info['config_embedding_model'] = 'Import failed'
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Embedding model info retrieved',
+            'embedding_info': embedding_info
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error checking embeddings: {str(e)}',
+            'embedding_info': None
+        }), 500
+
+@app.route('/force_rebuild_db', methods=['POST'])
+def force_rebuild_db():
+    """Force rebuild the vector database with current embedding model"""
+    global ai_app, ai_app_ready
+    
+    try:
+        if not ai_app:
+            return jsonify({
+                'status': 'error',
+                'message': 'AI app not initialized'
+            }), 500
+        
+        # Delete existing database files
+        import os
+        import shutil
+        if os.path.exists(DB_PATH):
+            try:
+                shutil.rmtree(DB_PATH)
+                os.makedirs(DB_PATH, exist_ok=True)
+                add_backend_log("Existing database files deleted for rebuild")
+            except Exception as e:
+                add_backend_log(f"Error deleting database files: {e}")
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Failed to delete existing database: {e}'
+                }), 500
+        
+        # Rebuild database in background
+        def rebuild_background():
+            global ai_app_error
+            try:
+                add_backend_log("Starting forced database rebuild...")
+                ai_app.build_db("forced_rebuild")
+                if ai_app.db is not None:
+                    add_backend_log("Forced database rebuild completed successfully!")
+                    ai_app_error = None
+                else:
+                    ai_app_error = "Forced database rebuild failed"
+                    add_backend_log("Forced database rebuild failed")
+            except Exception as e:
+                ai_app_error = f"Forced database rebuild error: {e}"
+                add_backend_log(f"Forced database rebuild error: {e}")
+        
+        # Start background rebuild
+        rebuild_thread = threading.Thread(target=rebuild_background, daemon=True)
+        rebuild_thread.start()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Database rebuild started in background'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Error starting rebuild: {str(e)}'
+        }), 500
 
 @app.route('/clear_history', methods=['POST'])
 def clear_history():
@@ -718,21 +897,21 @@ def get_ai_status():
     if not ai_app_ready:
         if ai_app_initializing:
             return jsonify({
-                'status': 'initializing',
-                'message': 'AI Assistant is initializing in background...',
+                'status': 'building',
+                'message': 'Building vector database in background...',
                 'ready': False
             })
         else:
             return jsonify({
-                'status': 'not_started',
-                'message': 'AI Assistant has not been started yet',
+                'status': 'building',
+                'message': 'Starting AI Assistant initialization...',
                 'ready': False
             })
     
     if not ai_app:
         return jsonify({
-            'status': 'not_available',
-            'message': 'AI Assistant not available',
+            'status': 'building',
+            'message': 'AI Assistant initializing...',
             'ready': False
         })
     
@@ -761,15 +940,15 @@ def get_document_status():
     if not ai_app_ready:
         if ai_app_initializing:
             return jsonify({
-                'status': 'initializing',
-                'message': 'AI Assistant is initializing in background...',
+                'status': 'building',
+                'message': 'Building vector database in background...',
                 'ready': False
             })
         else:
             # Trigger initialization
             ai_app = get_or_init_ai_app()
             return jsonify({
-                'status': 'starting',
+                'status': 'building',
                 'message': 'Starting AI Assistant initialization...',
                 'ready': False
             })
@@ -778,7 +957,10 @@ def get_document_status():
         return jsonify({'error': 'AI Assistant not available'})
     
     # Force refresh AI app state if documents exist but database isn't loaded
-    docs_exist = os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH))
+    try:
+        docs_exist = os.path.exists(DOCS_PATH) and any(os.listdir(DOCS_PATH))
+    except (OSError, PermissionError):
+        docs_exist = False
     if docs_exist and not ai_app.db:
         add_backend_log("Documents exist but vector database not loaded - forcing refresh")
         try:
@@ -822,7 +1004,7 @@ def get_document_status():
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
-    global ai_app, ai_app_ready, ai_app_initializing, ai_app_error
+    global ai_app, ai_app_ready, ai_app_initializing, ai_app_error, active_queries
     
     if ai_app_error:
         return jsonify({'error': f'AI Assistant error: {ai_app_error}'})
@@ -857,9 +1039,25 @@ def ask_question():
     question = data.get('question', '')
     topic_ids = data.get('topic_ids', ['none'])
     session_key = data.get('session_key', None)
+    query_id = data.get('query_id', str(uuid.uuid4()))
+    
+    # Capture question timestamp when question is received
+    question_timestamp = datetime.now()
     
     if not question:
         return jsonify({'error': 'Question is required'})
+    
+    # Check if this query was cancelled before processing
+    if query_id in _cancelled_queries:
+        clear_cancelled_query(query_id)  # Remove from cancelled set
+        return jsonify({'error': 'Query was cancelled'})
+    
+    # Register this query as active
+    active_queries[query_id] = {
+        'question': question,
+        'session_key': session_key,
+        'start_time': time.time()
+    }
     
     # Security check removed - no longer needed with shared user system
     
@@ -877,19 +1075,70 @@ def ask_question():
         ai_app._reset_context_state()
     
     try:
-        result = ai_app.handle_question(question, chat_history=chat_history, topic_ids=topic_ids)
+        # Check for cancellation before processing
+        if query_id in _cancelled_queries:
+            clear_cancelled_query(query_id)
+            if query_id in active_queries:
+                del active_queries[query_id]
+            return jsonify({'error': 'Query was cancelled'})
+        
+        result = ai_app.handle_question(question, chat_history=chat_history, topic_ids=topic_ids, query_id=query_id)
+        
+        # Check for cancellation after processing but before saving
+        if query_id in _cancelled_queries:
+            clear_cancelled_query(query_id)
+            if query_id in active_queries:
+                del active_queries[query_id]
+            return jsonify({'error': 'Query was cancelled'})
+        
         if 'error' in result:
+            if query_id in active_queries:
+                del active_queries[query_id]
             return jsonify({'error': result['error']})
         
-        save_chat_history(question, result['answer'], result['sources'], session_key=session_key)
+        # Only save to database if not cancelled
+        if query_id not in _cancelled_queries:
+            # Capture answer timestamp when answer is ready
+            answer_timestamp = datetime.now()
+            save_chat_history(question, result['answer'], result['sources'], session_key=session_key, 
+                            question_timestamp=question_timestamp, answer_timestamp=answer_timestamp)
+        
+        # Clean up active query
+        if query_id in active_queries:
+            del active_queries[query_id]
+        
         return jsonify({
             'answer': result['answer'],
             #'confidence': result['confidence'],
             'sources': result['sources']
         })
     except Exception as e:
+        # Clean up active query on error
+        if query_id in active_queries:
+            del active_queries[query_id]
         ai_app_error = str(e)
         return jsonify({'error': f'AI Assistant error: {e}'})
+
+@app.route('/cancel_query', methods=['POST'])
+def cancel_query():
+    """Cancel an active query"""
+    global active_queries
+    
+    data = request.get_json()
+    query_id = data.get('query_id')
+    
+    if not query_id:
+        return jsonify({'error': 'Query ID is required'})
+    
+    # Add to cancelled set
+    mark_query_cancelled(query_id)
+    
+    # Remove from active queries if present
+    if query_id in active_queries:
+        del active_queries[query_id]
+    
+    add_backend_log(f"Query {query_id} cancelled by user")
+    return jsonify({'status': 'success', 'message': 'Query cancelled'})
 
 @app.route('/update_document_topics', methods=['POST'])
 def update_document_topics():
@@ -1227,9 +1476,9 @@ def process_questions_parallel(questions, job_id):
             try:
                 result = future.result(timeout=180)  # 3 minutes per question timeout (allows for complex questions)
                 results.append(result)
-                add_backend_log(f"Completed question {index+1}/{len(questions)}: {question[:50]}...")
+                add_backend_log(f"Finished question {index+1}/{len(questions)}: {question[:50]}...")
             except TimeoutError:
-                add_backend_log(f"Question {index+1} timed out after 120 seconds")
+                add_backend_log(f"Question {index+1} timed out after 3 minutes")
                 results.append({
                     'question': question,
                     'answer': 'Processing timed out - question was too complex or system was overloaded',
@@ -1237,7 +1486,7 @@ def process_questions_parallel(questions, job_id):
                     'sources': {'summary': 'Timeout occurred', 'detailed': 'Processing timed out'}
                 })
             except Exception as e:
-                add_backend_log(f"Error processing question {index+1}: {e}")
+                add_backend_log(f"Error in question {index+1}: {e}")
                 results.append({
                     'question': question,
                     'answer': f'Error processing question: {str(e)}',
@@ -1257,11 +1506,11 @@ def process_single_question(question, index, job_id):
         # Update progress
         if job_id in questionnaire_progress:
             questionnaire_progress[job_id].update({
-                'current_question': f'Processing question {index+1}: {question[:50]}...',
+                'current_question': f'Question {index+1}: {question[:50]}...',
                 'message': f'Processing question {index+1} of {questionnaire_progress[job_id]["total_questions"]}'
             })
         
-        add_backend_log(f"Processing question {index+1}: {question[:50]}...")
+        add_backend_log(f"Starting question {index+1}: {question[:50]}...")
         
         # Check if AI app is ready
         if not ai_app or not hasattr(ai_app, 'db') or not ai_app.db:
@@ -1303,7 +1552,10 @@ def process_single_question(question, index, job_id):
         
         # Save to database
         try:
-            save_chat_history(question, answer, sources_for_db)
+            # For questionnaire processing, use current time for both timestamps
+            current_time = datetime.now()
+            save_chat_history(question, answer, sources_for_db, 
+                            question_timestamp=current_time, answer_timestamp=current_time)
         except Exception as e:
             add_backend_log(f"Warning: Could not save question {index+1} to database: {e}")
         
@@ -1320,7 +1572,7 @@ def process_single_question(question, index, job_id):
         }
         
     except Exception as e:
-        add_backend_log(f"Exception processing question {index+1}: {str(e)}")
+        add_backend_log(f"Exception in question {index+1}: {str(e)}")
         return {
             'question': question,
             'answer': f'Error processing question: {str(e)}',
@@ -1329,13 +1581,22 @@ def process_single_question(question, index, job_id):
         }
 
 def generate_questionnaire_results(results, filename, job_id):
-    """Generate CSV and return questionnaire results"""
+    """Generate Excel file with conditional formatting for questionnaire results"""
     try:
-        # Generate CSV
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow(['Question', 'Answer', 'Source'])
+        # Try to import openpyxl, fallback to CSV only if not available
+        try:
+            import pandas as pd
+            from openpyxl import Workbook
+            from openpyxl.styles import PatternFill
+            from openpyxl.formatting.rule import CellIsRule
+            from openpyxl.worksheet.cell_range import CellRange
+            openpyxl_available = True
+        except ImportError:
+            openpyxl_available = False
+            add_backend_log("openpyxl not available, creating CSV with format flags only")
         
+        # Create DataFrame
+        data = []
         for row in results:
             try:
                 sources_str = ""
@@ -1349,30 +1610,90 @@ def generate_questionnaire_results(results, filename, job_id):
                 question = str(row['question']).encode('utf-8', errors='ignore').decode('utf-8')
                 answer = clean_answer.encode('utf-8', errors='ignore').decode('utf-8')
                 source = sources_str.encode('utf-8', errors='ignore').decode('utf-8')
-                #confidence = str(row['confidence'])
                 
-                writer.writerow([question, answer, source])
+                data.append([question, answer, source])
             except Exception as row_error:
-                add_backend_log(f"Error writing CSV row: {row_error}")
-                writer.writerow(['Error processing question', 'Error processing answer', 'N/A'])
+                add_backend_log(f"Error writing row: {row_error}")
+                data.append(['Error processing question', 'Error processing answer', 'N/A'])
         
-        output.seek(0)
-        
-        # Create temporary file
+        # Create temporary files
         import tempfile
         import uuid
         
         unique_id = str(uuid.uuid4())
+        excel_filename = f'answers_{len(results)}_questions_{unique_id}.xlsx'
+        temp_file = None
+        
+        if openpyxl_available:
+            try:
+                # Create DataFrame
+                df = pd.DataFrame(data, columns=['Question', 'Answer', 'Source'])
+                
+                # Create temporary Excel file
+                temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                temp_file.close()
+                
+                # Write to Excel with conditional formatting
+                with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='Questionnaire Results', index=False)
+                    
+                    # Get the workbook and worksheet
+                    workbook = writer.book
+                    worksheet = writer.sheets['Questionnaire Results']
+                    
+                    # Define red fill for "No information available" responses
+                    red_fill = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
+                    
+                    # Apply conditional formatting to Answer column (column B)
+                    try:
+                        # Define the range for the Answer column (B2 to B1000 to avoid header)
+                        answer_range = CellRange('B2:B1000')
+                        
+                        no_info_rule = CellIsRule(operator='containsText', formula=['No information available'], fill=red_fill)
+                        worksheet.conditional_formatting.add(answer_range, no_info_rule)
+                        
+                        # Also check for variations of "no info" responses
+                        no_info_variations = ['No information', 'Information not available', 'Not found', 'No data available']
+                        for variation in no_info_variations:
+                            rule = CellIsRule(operator='containsText', formula=[variation], fill=red_fill)
+                            worksheet.conditional_formatting.add(answer_range, rule)
+                            
+                    except Exception as format_error:
+                        add_backend_log(f"Warning: Could not apply conditional formatting: {format_error}")
+                        # Continue without formatting - Excel file will still be created
+                        
+            except Exception as excel_error:
+                add_backend_log(f"Error creating Excel file: {excel_error}")
+                temp_file = None  # Fall back to CSV only
+        
+        # Also create CSV version with special formatting markers
+        csv_output = io.StringIO()
+        csv_writer = csv.writer(csv_output, quoting=csv.QUOTE_ALL)
+        csv_writer.writerow(['Question', 'Answer', 'Source', 'Format_Flag'])
+        
+        for row in data:
+            # Check if answer contains "no information" variations
+            answer = row[1].lower()
+            no_info_indicators = ['no information available', 'no information', 'information not available', 'not found', 'no data available']
+            
+            format_flag = "RED" if any(indicator in answer for indicator in no_info_indicators) else "NORMAL"
+            csv_writer.writerow([row[0], row[1], row[2], format_flag])
+        
+        csv_output.seek(0)
+        
+        # Create temporary CSV file
         csv_filename = f'answers_{len(results)}_questions_{unique_id}.csv'
+        csv_temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        csv_temp_file.write(csv_output.getvalue())
+        csv_temp_file.close()
         
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
-        temp_file.write(output.getvalue())
-        temp_file.close()
-        
-        # Store file mapping
+        # Store file mappings
         if not hasattr(app, 'temp_files'):
             app.temp_files = {}
-        app.temp_files[unique_id] = temp_file.name
+        
+        if temp_file:
+            app.temp_files[unique_id] = temp_file.name  # Excel file
+        app.temp_files[f"{unique_id}_csv"] = csv_temp_file.name  # CSV file
         
         add_backend_log(f"Questionnaire processing complete: {len(results)} questions processed")
         
@@ -1381,8 +1702,11 @@ def generate_questionnaire_results(results, filename, job_id):
             'answers': [r['answer'] for r in results],
             #'confidences': [r['confidence'] for r in results],
             'sources': [r['sources'] for r in results],
-            'csv_id': unique_id,
-            'filename': csv_filename,
+            'csv_id': f"{unique_id}_csv",
+            'excel_id': unique_id if temp_file else None,
+            'filename': excel_filename if temp_file else csv_filename,
+            'csv_filename': csv_filename,
+            'excel_available': temp_file is not None,
             'job_id': job_id
         })
         
@@ -1397,8 +1721,12 @@ def get_questionnaire_results(job_id):
         if job_id not in questionnaire_progress:
             return jsonify({'error': 'Job not found'}), 404
         
-        progress = questionnaire_progress[job_id]
-        if progress['status'] != 'completed':
+        try:
+            progress = questionnaire_progress[job_id]
+        except KeyError:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        if progress.get('status') != 'completed':
             return jsonify({'error': 'Job not yet completed'}), 400
         
         # Return the results that were stored during processing
@@ -1498,8 +1826,49 @@ def download_csv(file_id):
                 cleanup_thread.start()
         else:
             return jsonify({'error': 'File not found'}), 404
+            
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        add_backend_log(f"Error downloading CSV: {e}")
+        return jsonify({'error': f'Error downloading file: {str(e)}'}), 500
+
+@app.route('/download_excel/<file_id>', methods=['GET'])
+def download_excel(file_id):
+    """Download the generated Excel file with conditional formatting"""
+    try:
+        # Get the temp file path from the stored mapping
+        if not hasattr(app, 'temp_files') or file_id not in app.temp_files:
+            return jsonify({'error': 'File not found or expired'}), 404
+        
+        temp_file_path = app.temp_files[file_id]
+        
+        if os.path.exists(temp_file_path):
+            try:
+                return send_file(
+                    temp_file_path,
+                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    as_attachment=True,
+                    download_name=f'answers_{file_id}.xlsx'
+                )
+            finally:
+                # Clean up in a separate thread to avoid blocking
+                import threading
+                def cleanup_async():
+                    try:
+                        os.unlink(temp_file_path)
+                        if hasattr(app, 'temp_files'):
+                            app.temp_files.pop(file_id, None)
+                    except:
+                        pass
+                
+                cleanup_thread = threading.Thread(target=cleanup_async)
+                cleanup_thread.daemon = True
+                cleanup_thread.start()
+        else:
+            return jsonify({'error': 'File not found'}), 404
+            
+    except Exception as e:
+        add_backend_log(f"Error downloading Excel: {e}")
+        return jsonify({'error': f'Error downloading file: {str(e)}'}), 500
 
 # Simple rate limiting for get_history endpoint
 history_request_times = {}
@@ -3075,23 +3444,29 @@ schedule_cleanup_tasks()
 # configure_session_for_user function removed - no longer needed with shared user system
 
 if __name__ == '__main__':
-    print('Flask app starting...')
+    print('Flask app starting immediately...')
     
     # Start background progress cleanup
     start_progress_cleanup()
     
-    # Initialize AI App before starting Flask
-    print('Initializing AI App...')
-    try:
-        ai_app = get_or_init_ai_app()
-        if ai_app:
-            print('✓ AI App initialized successfully')
-        else:
-            print('⚠ AI App initialization failed, will retry on first request')
-    except Exception as e:
-        print(f'⚠ AI App initialization error: {e}, will retry on first request')
+    # Start AI App initialization in background thread
+    def init_ai_in_background():
+        global ai_app
+        print('Starting AI App initialization in background...')
+        try:
+            ai_app = get_or_init_ai_app()
+            if ai_app:
+                print('✓ AI App initialized successfully in background')
+            else:
+                print('⚠ AI App initialization failed in background, will retry on first request')
+        except Exception as e:
+            print(f'⚠ AI App initialization error in background: {e}, will retry on first request')
     
-    # Start the Flask app
-    # Get port from environment variable (Cloud Run) or default to 5000
+    # Start AI initialization in background thread
+    ai_init_thread = threading.Thread(target=init_ai_in_background, daemon=True)
+    ai_init_thread.start()
+    
+    # Start the Flask app immediately (don't wait for AI initialization)
+    print('Starting Flask app immediately - AI will initialize in background...')
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

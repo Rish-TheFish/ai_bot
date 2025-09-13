@@ -70,8 +70,22 @@ def build_db() -> None:
             logging.warning("⚠️ No documents loaded.")
             return
         # Use optimal chunking for FAQ bot quality
-        chunk_size = 384    # Increased size for better accuracy
-        chunk_overlap = 108  # 28% overlap for continuity
+        # Calculate chunk size based on embedding model dimension
+        try:
+            # Try to detect dimension from model name
+            if 'MiniLM-L6' in EMBEDDING_MODEL:
+                base_dimension = 384
+            elif 'MiniLM-L12' in EMBEDDING_MODEL:
+                base_dimension = 768
+            elif 'all-mpnet-base-v2' in EMBEDDING_MODEL:
+                base_dimension = 768
+            else:
+                base_dimension = 384  # Default fallback
+        except:
+            base_dimension = 384  # Safe fallback
+        
+        chunk_size = base_dimension    # Match embedding dimension for optimal performance
+        chunk_overlap = int(base_dimension * 0.28)  # 28% overlap for continuity
         
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,

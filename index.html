@@ -36,19 +36,19 @@
         .chat-area {
             flex: 1 1 auto;
             overflow-y: auto;
-            padding: 20px;
+            padding: 10px;
             background: #f8f9fa;
             min-height: 0;
             /* Remove fixed height */
         }
         .message {
-            margin-bottom: 15px;
-            padding: 20px 28px;
-            border-radius: 22px;
+            margin-bottom: 5px;
+            padding: 8px 14px;
+            border-radius: 15px;
             max-width: 90%;
             word-wrap: break-word;
             font-size: 1.05rem;
-            line-height: 1.5;
+            line-height: 1.3;
         }
         .user-message {
             background: linear-gradient(135deg, #87CEEB 0%, #B0E0E6 100%);
@@ -64,8 +64,23 @@
             font-size: 1.1rem;
             font-weight: 500;
         }
+        .message-timestamp {
+            font-size: 0.75rem;
+            color: #6c757d;
+            font-weight: 400;
+            text-align: right;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+        .questionnaire-progress {
+            background: rgba(135, 206, 235, 0.1);
+            padding: 8px 12px;
+            border-radius: 8px;
+            border-left: 3px solid #87CEEB;
+            margin-top: 8px;
+        }
         .input-area {
-            padding: 20px;
+            padding: 10px;
             background: white;
             border-radius: 0 0 20px 20px;
             flex-shrink: 0;
@@ -83,7 +98,7 @@
         .form-control {
             border-radius: 25px;
             border: 2px solid #e9ecef;
-            padding: 12px 20px;
+            padding: 8px 16px;
         }
         .form-control:focus {
             border-color: #87CEEB;
@@ -98,6 +113,7 @@
         }
         .status-connected { background: #28a745; }
         .status-disconnected { background: #dc3545; }
+        .status-building { background: #ffc107; }
         .loading-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -431,9 +447,7 @@
             font-size: 1.1rem;
         }
         
-        .idk-alert-modal button {
-            /* Default button styling removed - now using specific button classes */
-        }
+        /* .idk-alert-modal button styling removed - now using specific button classes */
         
         .idk-alert-modal button:hover {
             background: #b71c1c;
@@ -902,9 +916,17 @@
                 </div>
             </div>
             <div class="chat-area hidden" id="logsArea" style="height: calc(100vh - 200px); overflow-y: auto; position: relative;">
-                <button class="btn btn-outline-secondary btn-sm" id="clearLogsBtn" style="position: fixed; top: 10px; right: 10px; z-index: 1000; background: white; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <i class="fas fa-trash"></i> Clear
-                </button>
+                <div style="position: fixed; top: 10px; right: 10px; z-index: 1000; display: flex; gap: 5px;">
+                    <button class="btn btn-outline-info btn-sm" id="testEmbeddingsBtn" style="background: white; border: 1px solid #17a2b8; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <i class="fas fa-brain"></i> Test Embeddings
+                    </button>
+                    <button class="btn btn-outline-warning btn-sm" id="forceRebuildBtn" style="background: white; border: 1px solid #ffc107; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <i class="fas fa-sync-alt"></i> Force Rebuild
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" id="clearLogsBtn" style="background: white; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <i class="fas fa-trash"></i> Clear
+                    </button>
+                </div>
                 <div id="logsContent" style="padding-top: 50px;">
                 <div class="message ai-message">
                     <strong>📋 System Logs:</strong> System activity and mode changes will appear here.
@@ -1215,7 +1237,7 @@
                  </div>
              </div>
             <div class="input-area">
-                <div class="row mb-3 justify-content-center">
+                <div class="row mb-2 justify-content-center">
                     <div class="col-md-8 d-flex">
                         <input type="text" class="form-control flex-grow-1" id="questionInput" placeholder="Ask your compliance question..." disabled>
                         <button class="btn btn-custom ms-2" id="askButton" disabled>
@@ -1223,7 +1245,7 @@
                         </button>
                     </div>
                 </div>
-                <div class="row justify-content-center mb-2">
+                <div class="row justify-content-center mb-1">
                     <div class="col-md-2 d-flex justify-content-center">
                         <button class="btn btn-outline-secondary w-100" id="exportBtn">
                             <i class="fas fa-download"></i> Export Chat
@@ -1311,7 +1333,7 @@ let aiInitialized = false;
 let pendingAnimationStop = null;
 
 window.addEventListener('DOMContentLoaded', function() {
-    updateStatus('connecting'); // Show connecting status immediately
+    updateStatus('building'); // Show building status immediately
     initializeAI();
     setupEventListeners();
     // Add event delegation for sort-arrow clicks
@@ -1526,14 +1548,14 @@ window.addEventListener('DOMContentLoaded', function() {
         // Display the history
         history.forEach(item => {
             console.log(`[DEBUG] Displaying history item:`, item);
-            addMessage('🧑 You: ' + item.question, 'user');
+            addMessage('🧑 You: ' + item.question, 'user', false, item.question_timestamp);
             
             // Format answer with sources if available
             let answerText = `🤖 <strong>AI:</strong> ${item.answer}`;
             if (item.sources && item.sources !== 'N/A' && item.sources !== 'Error occurred') {
                 answerText += `<br><strong>Sources:</strong> ${item.sources}`;
             }
-            addMessage(answerText, 'ai');
+            addMessage(answerText, 'ai', false, item.answer_timestamp);
         });
         
         // Update chat input state based on current topic selection
@@ -1766,6 +1788,9 @@ function updateStatus(state) {
             indicator.className = 'status-indicator';
             indicator.style.background = '#ffc107'; // yellow
             statusText.textContent = 'Connecting...';
+        } else if (state === 'building') {
+            indicator.className = 'status-indicator status-building';
+            statusText.textContent = 'Building DB';
         } else {
             indicator.className = 'status-indicator status-disconnected';
             statusText.textContent = 'Disconnected';
@@ -1790,9 +1815,9 @@ function initializeAI() {
             setTimeout(updateChatInputState, 100);
             
             console.log('AI initialized successfully');
-        } else if (data.status === 'initializing') {
-            updateStatus('connecting');
-            addLogMessage('🔄 AI Assistant is initializing in background...');
+        } else if (data.status === 'building') {
+            updateStatus('building');
+            addLogMessage('🔨 Building vector database in background...');
             // Poll for status every 2 seconds
             setTimeout(checkAIStatus, 2000);
         } else {
@@ -1821,9 +1846,9 @@ function checkAIStatus() {
             
             addLogMessage('✅ AI Assistant is ready!');
             console.log('AI is ready');
-        } else if (data.status === 'initializing') {
-            updateStatus('connecting');
-            addLogMessage('🔄 AI Assistant is still initializing...');
+        } else if (data.status === 'building') {
+            updateStatus('building');
+            addLogMessage('🔨 Still building vector database...');
             setTimeout(checkAIStatus, 2000);
         } else {
             updateStatus(false);
@@ -1984,6 +2009,24 @@ function setupEventListeners() {
             });
         });
     }
+    
+    // Add event listeners for embedding test buttons
+    const testEmbeddingsBtn = document.getElementById('testEmbeddingsBtn');
+    const forceRebuildBtn = document.getElementById('forceRebuildBtn');
+    
+    if (testEmbeddingsBtn) {
+        testEmbeddingsBtn.addEventListener('click', function() {
+            testEmbeddings();
+        });
+    }
+    
+    if (forceRebuildBtn) {
+        forceRebuildBtn.addEventListener('click', function() {
+            if (confirm('Are you sure you want to force rebuild the database? This will delete the existing vector database and rebuild it with the current embedding model.')) {
+                forceRebuildDB();
+            }
+        });
+    }
 }
 
 function showInitPanel() {
@@ -2097,6 +2140,60 @@ function handleCheckerUpload() {
 //     });
 // }
 
+// Global variables to store current fetch request, abort controller, and query ID
+window.currentFetchRequest = null;
+window.currentAbortController = null;
+window.currentQueryId = null;
+
+function cancelCurrentQuery() {
+    console.log('[DEBUG] Cancel button clicked - terminating query');
+    
+    // Send cancellation request to backend if we have a query ID
+    if (window.currentQueryId) {
+        fetch('/cancel_query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query_id: window.currentQueryId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('[DEBUG] Backend cancellation response:', data);
+        })
+        .catch(error => {
+            console.log('[DEBUG] Backend cancellation error:', error);
+        });
+    }
+    
+    // Abort the current fetch request if it exists
+    if (window.currentAbortController) {
+        window.currentAbortController.abort();
+        console.log('[DEBUG] Fetch request aborted');
+    }
+    
+    // Clear the global references
+    window.currentFetchRequest = null;
+    window.currentAbortController = null;
+    window.currentQueryId = null;
+    
+    // Remove the thinking message
+    const thinkingMsg = document.getElementById('thinkingMessage');
+    if (thinkingMsg) thinkingMsg.remove();
+    
+    // Add a cancellation message
+    addMessage('🚫 <strong>Query Cancelled:</strong> The AI query was cancelled by the user.', 'ai', false);
+    
+    // Clear any stored question data to prevent leakage
+    window.currentQuestion = null;
+    
+    // Re-enable the input and button
+    const questionInput = document.getElementById('questionInput');
+    const askButton = document.getElementById('askButton');
+    if (questionInput) questionInput.disabled = false;
+    if (askButton) askButton.disabled = false;
+    
+    console.log('[DEBUG] Query cancelled and cleaned up');
+}
+
 function askQuestion() {
     const input = document.getElementById('questionInput');
     const question = input.value.trim();
@@ -2105,33 +2202,71 @@ function askQuestion() {
     // Store the current question globally for IDK alerts
     window.currentQuestion = question;
     
-    addMessage('🧑 You: ' + question, 'user');
+    // Disable input and button during processing
+    input.disabled = true;
+    const askButton = document.getElementById('askButton');
+    if (askButton) askButton.disabled = true;
+    
+    addMessage('🧑 You: ' + question, 'user', true);
     input.value = '';
-    // Add thinking robot message
+    // Add thinking robot message with cancel button
     const thinkingMessage = document.createElement('div');
     thinkingMessage.className = 'message ai-message';
     thinkingMessage.id = 'thinkingMessage';
-    thinkingMessage.innerHTML = '<span style="font-size:2em">🤖</span> <em>Thinking...</em>';
+    thinkingMessage.innerHTML = `
+        <span style="font-size:2em">🤖</span> <em>Thinking...</em>
+        <button id="cancelQueryBtn" class="btn btn-sm btn-outline-danger ms-3" style="font-size: 0.8em; padding: 4px 8px;">
+            <i class="fas fa-times"></i> Cancel
+        </button>
+    `;
     document.getElementById('chatMessages').appendChild(thinkingMessage);
     document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    
+    // Add cancel button event listener
+    const cancelBtn = document.getElementById('cancelQueryBtn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', cancelCurrentQuery);
+    }
     
     // Get the current topic selection and session key
     const topicIds = Array.from(window.selectedTopics || []);
     const sessionKey = currentChatSessionKey || 'topics:all';
     
-    console.log('[DEBUG] Sending question with:', { question, topic_ids: topicIds, session_key: sessionKey });
+    // Generate unique query ID for cancellation tracking
+    window.currentQueryId = 'query_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
-    fetch('/ask', {
+    console.log('[DEBUG] Sending question with:', { question, topic_ids: topicIds, session_key: sessionKey, query_id: window.currentQueryId });
+    
+    // Create abort controller for this request
+    window.currentAbortController = new AbortController();
+    
+    // Store the current fetch request globally so it can be aborted
+    window.currentFetchRequest = fetch('/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
             question: question,
             topic_ids: topicIds,
-            session_key: sessionKey
-        })
-    })
+            session_key: sessionKey,
+            query_id: window.currentQueryId
+        }),
+        signal: window.currentAbortController.signal
+    });
+    
+    window.currentFetchRequest
     .then(response => response.json())
     .then(data => {
+        // Clear the global fetch request, abort controller, and query ID
+        window.currentFetchRequest = null;
+        window.currentAbortController = null;
+        window.currentQueryId = null;
+        
+        // Re-enable input and button
+        const questionInput = document.getElementById('questionInput');
+        const askButton = document.getElementById('askButton');
+        if (questionInput) questionInput.disabled = false;
+        if (askButton) askButton.disabled = false;
+        
         // Remove thinking message
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
@@ -2179,6 +2314,23 @@ function askQuestion() {
         }
     })
     .catch(error => {
+        // Check if this is an abort error (cancelled by user)
+        if (error.name === 'AbortError') {
+            console.log('[DEBUG] Request was aborted by user');
+            return; // Don't show error message for user-initiated cancellation
+        }
+        
+        // Clear the global fetch request, abort controller, and query ID
+        window.currentFetchRequest = null;
+        window.currentAbortController = null;
+        window.currentQueryId = null;
+        
+        // Re-enable input and button
+        const questionInput = document.getElementById('questionInput');
+        const askButton = document.getElementById('askButton');
+        if (questionInput) questionInput.disabled = false;
+        if (askButton) askButton.disabled = false;
+        
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
         addMessage('❌ Error: ' + error, 'ai', false);
@@ -2697,10 +2849,27 @@ window.isQuestionnaireMode = false;
 //     }
 // }
 
-function addMessage(text, type, isNewMessage = false) {
+function addMessage(text, type, isNewMessage = false, timestamp = null) {
     const chatMessages = document.getElementById('chatMessages');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${type}-message`;
+    
+    // Format timestamp - always show timestamp in PST
+    let timestampHtml = '';
+    const timestampToUse = timestamp || new Date().toISOString();
+    const date = new Date(timestampToUse);
+    const timeStr = date.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: 'America/Los_Angeles'
+    });
+    const dateStr = date.toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        timeZone: 'America/Los_Angeles'
+    });
+    timestampHtml = `<div class="message-timestamp">${dateStr} ${timeStr} PST</div>`;
+    console.log('[DEBUG] Adding timestamp:', timestampHtml);
     
     // IDK Detection - DISABLED FOR TESTING
     // if (type === 'ai' && isNewMessage) {
@@ -2733,7 +2902,7 @@ function addMessage(text, type, isNewMessage = false) {
     // }
     
     // Simplified message display without IDK detection
-    messageDiv.innerHTML = text;
+    messageDiv.innerHTML = text + timestampHtml;
     
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -2751,6 +2920,58 @@ function addLogMessage(text, id = null) {
     logsArea.appendChild(messageDiv);
     logsArea.scrollTop = logsArea.scrollHeight;
     return messageDiv;
+}
+
+function testEmbeddings() {
+    addLogMessage('🧠 Testing embedding model configuration...');
+    
+    fetch('/test_embeddings')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                const info = data.embedding_info;
+                addLogMessage(`✅ Embedding Model Test Results:`);
+                addLogMessage(`   • Type: ${info.embedding_type}`);
+                addLogMessage(`   • Has BGE Model: ${info.has_bge_model}`);
+                addLogMessage(`   • BGE Model is None: ${info.bge_model_is_none}`);
+                addLogMessage(`   • Embedding Class: ${info.embedding_class}`);
+                addLogMessage(`   • Config Model: ${info.config_model}`);
+                addLogMessage(`   • Config EMBEDDING_MODEL: ${info.config_embedding_model}`);
+                
+                if (info.embedding_type === 'configured' && !info.bge_model_is_none) {
+                    addLogMessage('🎯 SUCCESS: Using configured embedding model!');
+                } else {
+                    addLogMessage('⚠️ WARNING: Not using configured embedding model!');
+                }
+            } else {
+                addLogMessage(`❌ Error testing embeddings: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            addLogMessage(`❌ Error testing embeddings: ${error.message}`);
+        });
+}
+
+function forceRebuildDB() {
+    addLogMessage('🔄 Starting forced database rebuild...');
+    
+    fetch('/force_rebuild_db', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                addLogMessage('✅ Database rebuild started successfully!');
+                addLogMessage('🔄 The system will rebuild the vector database with the current embedding model.');
+                addLogMessage('⏳ This may take several minutes. Check the status indicator for progress.');
+                
+                // Update status to show rebuilding
+                updateStatus('building');
+            } else {
+                addLogMessage(`❌ Error starting rebuild: ${data.message}`);
+            }
+        })
+        .catch(error => {
+            addLogMessage(`❌ Error starting rebuild: ${error.message}`);
+        });
 }
 
 function updateLogMessage(id, text) {
@@ -3251,7 +3472,6 @@ addDocBtn.addEventListener('click', function() {
             this.innerHTML = '<i class="fas fa-plus"></i> Add Documents';
             this.classList.remove('btn-secondary');
             this.classList.add('btn-primary');
-            alert('PIN verified! Upload button is now unlocked.');
         } else {
             wrongPinAttempts++;
             if (wrongPinAttempts >= MAX_PIN_ATTEMPTS) {
@@ -4799,21 +5019,55 @@ function sendChatQuestion() {
     if (!question) return;
     const topic_ids = getSelectedChatTopicIds();
     const session_key = getCurrentChatSessionKey();
+    // Disable input and button during processing
+    input.disabled = true;
+    askButton.disabled = true;
+    
     addMessage('🧑 You: ' + question, 'user');
     input.value = '';
     const thinkingMessage = document.createElement('div');
     thinkingMessage.className = 'message ai-message';
     thinkingMessage.id = 'thinkingMessage';
-    thinkingMessage.innerHTML = '<span style="font-size:2em">🤖</span> <em>Thinking...</em>';
+    thinkingMessage.innerHTML = `
+        <span style="font-size:2em">🤖</span> <em>Thinking...</em>
+        <button id="cancelQueryBtn" class="btn btn-sm btn-outline-danger ms-3" style="font-size: 0.8em; padding: 4px 8px;">
+            <i class="fas fa-times"></i> Cancel
+        </button>
+    `;
     document.getElementById('chatMessages').appendChild(thinkingMessage);
     document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-    fetch('/ask', {
+    
+    // Add cancel button event listener
+    const cancelBtn = document.getElementById('cancelQueryBtn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', cancelCurrentQuery);
+    }
+    // Generate unique query ID for cancellation tracking
+    window.currentQueryId = 'query_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    // Create abort controller for this request
+    window.currentAbortController = new AbortController();
+    
+    // Store the current fetch request globally so it can be aborted
+    window.currentFetchRequest = fetch('/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, topic_ids, session_key })
-    })
+        body: JSON.stringify({ question, topic_ids, session_key, query_id: window.currentQueryId }),
+        signal: window.currentAbortController.signal
+    });
+    
+    window.currentFetchRequest
     .then(response => response.json())
     .then(data => {
+        // Clear the global fetch request, abort controller, and query ID
+        window.currentFetchRequest = null;
+        window.currentAbortController = null;
+        window.currentQueryId = null;
+        
+        // Re-enable input and button
+        input.disabled = false;
+        askButton.disabled = false;
+        
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
         if (data.error) {
@@ -4863,6 +5117,21 @@ function sendChatQuestion() {
         }
     })
     .catch(error => {
+        // Check if this is an abort error (cancelled by user)
+        if (error.name === 'AbortError') {
+            console.log('[DEBUG] Request was aborted by user');
+            return; // Don't show error message for user-initiated cancellation
+        }
+        
+        // Clear the global fetch request, abort controller, and query ID
+        window.currentFetchRequest = null;
+        window.currentAbortController = null;
+        window.currentQueryId = null;
+        
+        // Re-enable input and button
+        input.disabled = false;
+        askButton.disabled = false;
+        
         const thinkingMsg = document.getElementById('thinkingMessage');
         if (thinkingMsg) thinkingMsg.remove();
         addMessage('❌ Error: ' + error, 'ai', false);
@@ -5281,6 +5550,8 @@ function toggleDetailedAnswer(toggleElement) {
 }
 
 function monitorQuestionnaireProgress(jobId) {
+    let thinkingMessage = null;
+    
     const progressInterval = setInterval(() => {
         fetch(`/questionnaire_progress/${jobId}`)
         .then(response => response.json())
@@ -5288,6 +5559,7 @@ function monitorQuestionnaireProgress(jobId) {
             if (data.error) {
                 clearInterval(progressInterval);
                 addLogMessage(`❌ Error tracking progress: ${data.error}`);
+                if (thinkingMessage) thinkingMessage.remove();
                 return;
             }
             
@@ -5298,11 +5570,32 @@ function monitorQuestionnaireProgress(jobId) {
                 
                 if (data.current_question) {
                     addLogMessage(`📝 ${data.current_question}`);
+                    
+                    // Show thinking message in chat area with Q x/y format
+                    if (thinkingMessage) {
+                        thinkingMessage.remove();
+                    }
+                    thinkingMessage = document.createElement('div');
+                    thinkingMessage.className = 'message ai-message';
+                    thinkingMessage.id = 'questionnaireThinkingMessage';
+                    thinkingMessage.innerHTML = `
+                        <span style="font-size:2em">🤖</span> <em>Processing questionnaire...</em>
+                        <div class="questionnaire-progress" style="margin-top: 10px; font-size: 0.9em; color: #666;">
+                            <strong>Q ${data.completed_questions + 1}/${data.total_questions}</strong> - ${data.current_question.split(':')[1] ? data.current_question.split(':')[1].trim() : 'Processing...'}
+                        </div>
+                    `;
+                    document.getElementById('chatMessages').appendChild(thinkingMessage);
+                    document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
                 }
             } else if (data.status === 'completed') {
                 clearInterval(progressInterval);
                 addLogMessage(`✅ Questionnaire processing complete!`);
                 addLogMessage(`📊 Processed ${data.completed_questions} questions successfully`);
+                
+                // Remove thinking message
+                if (thinkingMessage) {
+                    thinkingMessage.remove();
+                }
                 
                 // End questionnaire mode - IDK alerts disabled for testing
                 // endQuestionnaireMode();
@@ -5312,11 +5605,17 @@ function monitorQuestionnaireProgress(jobId) {
             } else if (data.status === 'error') {
                 clearInterval(progressInterval);
                 addLogMessage(`❌ Processing failed: ${data.message}`);
+                if (thinkingMessage) {
+                    thinkingMessage.remove();
+                }
             }
         })
         .catch(error => {
             clearInterval(progressInterval);
             addLogMessage(`❌ Error checking progress: ${error}`);
+            if (thinkingMessage) {
+                thinkingMessage.remove();
+            }
         });
     }, 2000); // Check every 2 seconds
 }
@@ -5353,17 +5652,42 @@ function showQuestionnaireResults(jobId) {
                 color: white;
             `;
             
+            // Build download buttons based on availability
+            let downloadButtons = '';
+            if (data.excel_available && data.excel_id) {
+                downloadButtons += `
+                    <a href="/download_excel/${data.excel_id}" 
+                       class="btn btn-success btn-lg" 
+                       download="${data.filename || 'questionnaire_results.xlsx'}"
+                       style="text-decoration: none; font-weight: 600;">
+                        <i class="fas fa-file-excel"></i> Download Excel
+                    </a>`;
+            }
+            
+            downloadButtons += `
+                <a href="/download_csv/${data.csv_id}" 
+                   class="btn btn-light btn-lg" 
+                   download="${data.csv_filename || 'questionnaire_results.csv'}"
+                   style="text-decoration: none; font-weight: 600;">
+                    <i class="fas fa-download"></i> Download CSV
+                </a>`;
+            
+            let description = '';
+            if (data.excel_available) {
+                description = 'Excel version highlights "No information available" responses in red<br>';
+            } else {
+                description = 'CSV includes Format_Flag column - use conditional formatting in your spreadsheet<br>';
+            }
+            description += 'Files will be automatically cleaned up after download';
+            
             downloadLink.innerHTML = `
                 <h5 style="margin: 0 0 10px 0; color: white;">📥 Download Results</h5>
                 <p style="margin: 0 0 15px 0; font-size: 0.9em;">Your questionnaire results are ready!</p>
-                <a href="/download_csv/${data.csv_id}" 
-                   class="btn btn-light btn-lg" 
-                   download="${data.filename || 'questionnaire_results.csv'}"
-                   style="text-decoration: none; font-weight: 600;">
-                    <i class="fas fa-download"></i> Download CSV
-                </a>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    ${downloadButtons}
+                </div>
                 <p style="margin: 10px 0 0 0; font-size: 0.8em; opacity: 0.9;">
-                    File will be automatically cleaned up after download
+                    ${description}
                 </p>
             `;
             

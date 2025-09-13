@@ -1,6 +1,6 @@
-MODEL_NAME = "cogito:3b"
+MODEL_NAME = "llama3.1:8b"
 DOCS_PATH = "./your_docs"
 DB_PATH = "./your_db"
-EMBEDDING_MODEL = "sentence-transformers/multi-qa-MiniLM-L6-cos-v1"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L12-v2"
 UPLOAD_PIN = "1964"
 POSTGRES_PASSWORD = "321Calvin123"

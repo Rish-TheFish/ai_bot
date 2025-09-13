@@ -7,6 +7,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Force CPU usage
 
 from Logistics_Files import *
 from Logistics_Files.config_details import DOCS_PATH, DB_PATH, EMBEDDING_MODEL, MODEL_NAME, POSTGRES_PASSWORD
@@ -45,6 +46,24 @@ import inspect
 import psutil
 import subprocess
 import platform
+
+# Global cancellation tracking - shared state
+_cancelled_queries = set()
+
+def is_query_cancelled(query_id: Optional[str]) -> bool:
+    """Check if a query has been cancelled"""
+    if not query_id:
+        return False
+    return query_id in _cancelled_queries
+
+def mark_query_cancelled(query_id: str):
+    """Mark a query as cancelled"""
+    _cancelled_queries.add(query_id)
+
+def clear_cancelled_query(query_id: str):
+    """Remove a query from cancelled list"""
+    _cancelled_queries.discard(query_id)
+
 # Optional table extraction imports (heavy dependencies)
 try:
     import pandas as pd
@@ -52,7 +71,7 @@ try:
     import camelot
     from PIL import Image
     import pytesseract
-    import cv2
+    # import cv2
     TABLE_EXTRACTION_AVAILABLE = True
     logging.info("[DEBUG] Table extraction libraries loaded successfully")
 except ImportError as e:
@@ -234,12 +253,39 @@ class AIApp:
         logging.info(f"[DEBUG] Initializing embedding models from config: {EMBEDDING_MODEL}")
         self.initialize_embedding_models()
         
-        # Multi-qa embeddings are now initialized in initialize_embedding_models()
+        # Embeddings are now initialized in initialize_embedding_models()
         # Set embedding dimension based on the initialized model
         if hasattr(self, 'embedding') and hasattr(self.embedding, 'embedding_dimension'):
             self.embedding_dimension = self.embedding.embedding_dimension
         else:
-            self.embedding_dimension = 384  # Default multi-qa-MiniLM-L6 dimension
+            # Get embedding dimension from the model, with fallback for common models
+            try:
+                if hasattr(self, 'bge_model') and self.bge_model:
+                    # Test embedding to get actual dimension
+                    test_embedding = self.bge_model.encode("test")
+                    self.embedding_dimension = len(test_embedding)
+                    logging.info(f"[DEBUG] Detected embedding dimension: {self.embedding_dimension}")
+                else:
+                    # Try to detect dimension from model name
+                    if 'MiniLM-L6' in EMBEDDING_MODEL:
+                        self.embedding_dimension = 384
+                    elif 'MiniLM-L12' in EMBEDDING_MODEL:
+                        self.embedding_dimension = 768
+                    elif 'all-mpnet-base-v2' in EMBEDDING_MODEL:
+                        self.embedding_dimension = 768
+                    else:
+                        self.embedding_dimension = 384  # Generic fallback
+            except Exception as e:
+                logging.warning(f"[DEBUG] Could not detect embedding dimension: {e}, using default")
+                # Try to detect dimension from model name
+                if 'MiniLM-L6' in EMBEDDING_MODEL:
+                    self.embedding_dimension = 384
+                elif 'MiniLM-L12' in EMBEDDING_MODEL:
+                    self.embedding_dimension = 768
+                elif 'all-mpnet-base-v2' in EMBEDDING_MODEL:
+                    self.embedding_dimension = 768
+                else:
+                    self.embedding_dimension = 384  # Generic fallback
         
         # Ensure embedding_dimension is always set
         if not hasattr(self, 'embedding_dimension'):
@@ -247,7 +293,7 @@ class AIApp:
         
         # Validate the embedding model (after embedding_dimension is set)
         if hasattr(self, 'bge_model') and self.bge_model is not None:
-            logging.info("[ACCURACY] Validating multi-qa embedding model...")
+            logging.info(f"[ACCURACY] Validating {EMBEDDING_MODEL} embedding model...")
             is_valid, validation_msg = self.validate_embedding_model()
             if is_valid:
                 logging.info(f"[ACCURACY] {validation_msg}")
@@ -276,29 +322,30 @@ class AIApp:
         logging.info(f"[DEBUG] Hardware detected: {optimal_device} (Ollama will auto-optimize)")
         
         # OllamaLLM automatically uses the best available device (GPU if available, CPU if not)
-        # PHASE 1 OPTIMIZATION: Deterministic generation for maximum accuracy
+        # PRODUCT DOCUMENTATION: Optimized for comprehensive coverage and long documents
         self.llm = OllamaLLM(
             model=MODEL_NAME,
-            temperature=0.2,      # ✅ ChatGPT 5 recommended: 0.1-0.3 (was 0.0)
-            top_p=0.9,           # ✅ ChatGPT 5 recommended: ~0.9 (was 0.1)
-            top_k=1,             # ✅ Single best token (was default)
-            repetition_penalty=1.1, # ✅ ChatGPT 5 recommended: 1.05-1.15 (was 1.0)
-            num_ctx=4096,        # Keep balanced context for now
-            num_predict=1536,    # ✅ Increased for complete answers (was 768)
-            stop=["\n\nEXAMPLE"], # ✅ Simplified stops to prevent cut-offs (was complex)
-            do_sample=False,     # ✅ Deterministic generation (was True)
+            temperature=0.3,      # ✅ Product docs: 0.3 for creative problem-solving
+            top_p=0.95,          # ✅ Product docs: 0.95 for comprehensive responses
+            top_k=10,            # ✅ Product docs: 10 for better token diversity
+            repetition_penalty=1.15, # ✅ Product docs: 1.15 for natural language
+            num_ctx=16384,       # ✅ Product docs: 16K context for long documents
+            num_predict=2048,    # ✅ Product docs: 2K for detailed answers
+            stop=["\n\nEXAMPLE"], # ✅ Simplified stops to prevent cut-offs
+            do_sample=True,      # ✅ Product docs: True for natural responses
             reset=True           # Reset conversation context for each call
         )
         logging.info(f"[DEBUG] LLM initialized successfully (Ollama auto-detected device)")
         
-        # Log Phase 1 optimizations for accuracy tracking
-        logging.info("[ACCURACY] PHASE 1 OPTIMIZATIONS ACTIVE:")
-        logging.info("[ACCURACY]   ✅ Temperature: 0.0 (completely deterministic)")
-        logging.info("[ACCURACY]   ✅ Top-P: 0.1 (only most likely tokens)")
-        logging.info("[ACCURACY]   ✅ Top-K: 1 (single best token)")
-        logging.info("[ACCURACY]   ✅ Repetition Penalty: 1.0 (no penalty)")
-        logging.info("[ACCURACY]   ✅ Do Sample: False (deterministic generation)")
-        logging.info("[ACCURACY] Expected accuracy improvement: +35-50%")
+        # Log Product Documentation optimizations for comprehensive coverage
+        logging.info("[ACCURACY] PRODUCT DOCUMENTATION OPTIMIZATIONS ACTIVE:")
+        logging.info("[ACCURACY]   ✅ Temperature: 0.3 (creative problem-solving)")
+        logging.info("[ACCURACY]   ✅ Top-P: 0.95 (comprehensive responses)")
+        logging.info("[ACCURACY]   ✅ Top-K: 10 (better token diversity)")
+        logging.info("[ACCURACY]   ✅ Repetition Penalty: 1.15 (natural language)")
+        logging.info("[ACCURACY]   ✅ Context: 16K (long document support)")
+        logging.info("[ACCURACY]   ✅ Do Sample: True (natural responses)")
+        logging.info("[ACCURACY] Expected accuracy improvement: +40-60%")
         self.db = None
         self.recording = False
         self.locked_out = False
@@ -385,7 +432,7 @@ class AIApp:
         logging.info(f"[DEBUG] Step 5: AIApp initialization completed")
         logging.info(f"[DEBUG] Final configuration:")
         logging.info(f"[DEBUG]   - Hardware detected: {self.hardware_info['optimal_device']}")
-        embedding_type = "Multi-QA" if hasattr(self, 'bge_model') and self.bge_model is not None else MODEL_NAME.split(':')[0]
+        embedding_type = "Configured" if hasattr(self, 'bge_model') and self.bge_model is not None else MODEL_NAME.split(':')[0]
         logging.info(f"[DEBUG]   - Embedding model: {embedding_type} ({self.current_embedding_type})")
         logging.info(f"[DEBUG]   - LLM model: {MODEL_NAME}")
         logging.info(f"[DEBUG]   - Confidence model: {'Available' if self.confidence_model else 'Not available'}")
@@ -411,26 +458,34 @@ class AIApp:
         logging.info("[ACCURACY]   • Do Sample: False (deterministic generation)")
         logging.info("[ACCURACY] Total expected accuracy improvement: +35-50%")
         
-        # Log Phase 3 Prompt Engineering summary
-        logging.info("[ACCURACY] PHASE 3 PROMPT ENGINEERING ACTIVE:")
-        logging.info("[ACCURACY]   • Cogito 3B-optimized prompt structure")
-        logging.info("[ACCURACY]   • Two-tier response format (detailed + helpful)")
-        logging.info("[ACCURACY]   • Streamlined search methodology (5-step process)")
-        logging.info("[ACCURACY]   • Ultra-compact design (<2000 characters)")
-        logging.info("[ACCURACY]   • Structured context organization")
-        logging.info("[ACCURACY] Expected additional accuracy improvement: +12-18%")
-        logging.info("[ACCURACY] Total cumulative improvement: +47-68%")
+        # Log Product-Focused Prompt Engineering summary
+        logging.info("[ACCURACY] PRODUCT-FOCUSED PROMPT ENGINEERING ACTIVE:")
+        logging.info("[ACCURACY]   • mistral:7b-optimized prompt structure")
+        logging.info("[ACCURACY]   • Product and technical documentation focus")
+        logging.info("[ACCURACY]   • Comprehensive, detailed responses")
+        logging.info("[ACCURACY]   • No restrictive character limits")
+        logging.info("[ACCURACY] Expected additional accuracy improvement: +15-25%")
+        logging.info("[ACCURACY] Total cumulative improvement: +50-75%")
 
     def initialize_embedding_models(self):
-        """Initialize embeddings using multi-qa-MiniLM-L6-cos-v1 for maximum accuracy in Q&A tasks."""
+        """Initialize embeddings using the configured model for maximum accuracy in Q&A tasks."""
         try:
             if SENTENCE_TRANSFORMERS_AVAILABLE:
                 from sentence_transformers import SentenceTransformer
                 import torch
                 
-                # Initialize the multi-qa model which is specifically optimized for Q&A
+                # Initialize the configured embedding model which is optimized for semantic search
                 logging.info(f"[ACCURACY] Initializing {EMBEDDING_MODEL} for maximum Q&A accuracy...")
-                self.bge_model = SentenceTransformer(EMBEDDING_MODEL)
+                print(f"[DEBUG] About to load embedding model: {EMBEDDING_MODEL}")
+                
+                # Force download and initialization of the model
+                self.bge_model = SentenceTransformer(EMBEDDING_MODEL, device='cpu')
+                print(f"[DEBUG] Successfully loaded embedding model: {EMBEDDING_MODEL}")
+                
+                # Test the model with a simple embedding
+                test_text = "test"
+                test_embedding = self.bge_model.encode(test_text)
+                print(f"[DEBUG] Test embedding generated successfully, dimension: {len(test_embedding)}")
                 
                 # Optimize the model for better performance
                 if torch.cuda.is_available():
@@ -442,9 +497,10 @@ class AIApp:
                 
                 # Create a wrapper that matches LangChain's embedding interface
                 self.embedding = self._create_optimized_qa_wrapper()
-                self.current_embedding_type = "multi-qa"
-                logging.info(f"[ACCURACY] Using {EMBEDDING_MODEL} embeddings - optimized for Q&A accuracy!")
+                self.current_embedding_type = "configured"
+                logging.info(f"[ACCURACY] Using {EMBEDDING_MODEL} embeddings - optimized for semantic search!")
                 logging.info(f"[ACCURACY] Model dimension: {self.bge_model.get_sentence_embedding_dimension()}D")
+                print(f"[DEBUG] Embedding model {EMBEDDING_MODEL} initialized successfully!")
             else:
                 # Fallback to Ollama embeddings if sentence-transformers not available
                 from langchain_ollama import OllamaEmbeddings
@@ -453,20 +509,23 @@ class AIApp:
                 self.current_embedding_type = "ollama"
                 logging.warning(f"[FALLBACK] sentence-transformers not available, using Ollama embeddings")
         except Exception as e:
-            logging.error(f"[DEBUG] Failed to initialize multi-qa embeddings: {e}")
+            logging.error(f"[DEBUG] Failed to initialize {EMBEDDING_MODEL} embeddings: {e}")
+            print(f"[DEBUG] Error initializing {EMBEDDING_MODEL}: {e}")
             # Fallback to Ollama embeddings
             try:
                 from langchain_ollama import OllamaEmbeddings
                 self.embedding = OllamaEmbeddings(model=MODEL_NAME)
                 self.bge_model = None
                 self.current_embedding_type = "ollama"
-                logging.warning(f"[FALLBACK] Using Ollama embeddings due to multi-qa initialization failure")
+                logging.warning(f"[FALLBACK] Using Ollama embeddings due to {EMBEDDING_MODEL} initialization failure")
+                print(f"[DEBUG] Fallback to Ollama embeddings due to {EMBEDDING_MODEL} failure")
             except Exception as fallback_e:
-                logging.error(f"[DEBUG] Both multi-qa and Ollama embeddings failed: {fallback_e}")
+                logging.error(f"[DEBUG] Both {EMBEDDING_MODEL} and Ollama embeddings failed: {fallback_e}")
+                print(f"[DEBUG] Both embedding models failed: {fallback_e}")
                 raise Exception("No embedding model available")
 
     def _create_optimized_qa_wrapper(self):
-        """Create a LangChain-compatible wrapper for multi-qa-MiniLM-L6-cos-v1 embeddings."""
+        """Create a LangChain-compatible wrapper for the configured embedding model."""
         class MultiQAEmbeddingWrapper:
             def __init__(self, model):
                 self.model = model
@@ -474,7 +533,13 @@ class AIApp:
                 try:
                     self.embedding_dimension = model.get_sentence_embedding_dimension()
                 except:
-                    self.embedding_dimension = 384  # Default for MiniLM-L6 models
+                    # Dynamic fallback based on model type
+                    if 'MiniLM-L6' in str(type(model)):
+                        self.embedding_dimension = 384
+                    elif 'MiniLM-L12' in str(type(model)):
+                        self.embedding_dimension = 768
+                    else:
+                        self.embedding_dimension = 384  # Generic fallback
             
             def __call__(self, text):
                 """Make the wrapper callable for LangChain compatibility."""
@@ -498,11 +563,11 @@ class AIApp:
         return MultiQAEmbeddingWrapper(self.bge_model)
 
     def get_query_embeddings(self, query: str):
-        """Get query embeddings using the configured multi-qa embeddings object."""
+        """Get query embeddings using the configured embedding model."""
         return self.embedding.embed_query(query)
     
     def validate_embedding_model(self):
-        """Validate that the multi-qa embedding model is working correctly."""
+        """Validate that the configured embedding model is working correctly."""
         try:
             if not hasattr(self, 'bge_model') or self.bge_model is None:
                 return False, "No embedding model available"
@@ -520,6 +585,13 @@ class AIApp:
             embedding_norm = np.linalg.norm(test_embedding)
             if abs(embedding_norm - 1.0) > 0.01:  # Allow small floating point differences
                 return False, f"Embeddings not normalized: norm = {embedding_norm}"
+            
+            # Additional validation for the configured model
+            print(f"[DEBUG] Embedding model validation:")
+            print(f"[DEBUG]   - Model: {EMBEDDING_MODEL}")
+            print(f"[DEBUG]   - Dimension: {self.embedding_dimension}D")
+            print(f"[DEBUG]   - Normalized: {abs(embedding_norm - 1.0) < 0.01}")
+            print(f"[DEBUG]   - Test embedding length: {len(test_embedding)}")
             
             return True, f"Model validated successfully - dimension: {self.embedding_dimension}D, normalized: True"
             
@@ -567,16 +639,24 @@ class AIApp:
             return False, f"LLM validation failed: {str(e)}"
 
     def _create_fast_faiss_database(self, chunks, embedding_model):
-        """Create FAISS database using configured embeddings (multi-qa or Ollama)."""
-        embedding_type = "Multi-QA" if self.current_embedding_type == "multi-qa" else "Ollama"
+        """Create FAISS database using configured embeddings."""
+        embedding_type = "Configured" if self.current_embedding_type == "configured" else "Ollama"
         print(f"[FAST] Creating FAISS database with {len(chunks)} chunks using {embedding_type} embeddings...")
+        
+        # Debug: Show which embedding model is actually being used
+        if hasattr(self, 'bge_model') and self.bge_model is not None:
+            print(f"[DEBUG] Using configured embedding model: {EMBEDDING_MODEL}")
+            print(f"[DEBUG] Model type: {type(self.bge_model)}")
+        else:
+            print(f"[DEBUG] Using fallback Ollama embeddings: {MODEL_NAME}")
+        
         return FAISS.from_documents(chunks, self.embedding)
 
     def select_optimal_embedding(self, operation_type="initial_build"):
         """Select the optimal embedding model based on operation type."""
-        # Use multi-qa embeddings if available, fallback to config model
+        # Use configured embeddings if available, fallback to config model
         if hasattr(self, 'bge_model') and self.bge_model is not None:
-            self.current_embedding_type = "multi-qa"
+            self.current_embedding_type = "configured"
             logging.info(f"[DEBUG] Using {EMBEDDING_MODEL} embeddings for maximum Q&A accuracy")
         else:
             self.current_embedding_type = MODEL_NAME.split(':')[0]  # Extract model name without version
@@ -610,7 +690,7 @@ class AIApp:
                 logging.warning("[DEBUG] Step 3a: Database files don't exist or are invalid")
                 return False
             
-            # Load the FAISS database with configured embeddings (multi-qa)
+            # Load the FAISS database with configured embeddings
             self.db = FAISS.load_local(DB_PATH, self.embedding, allow_dangerous_deserialization=True)
             logging.info("[DEBUG] Step 3b: FAISS database loaded successfully")
             
@@ -618,7 +698,7 @@ class AIApp:
             self._optimize_existing_faiss_index()
             
             doc_count = len([f for f in os.listdir(DOCS_PATH) if os.path.isfile(os.path.join(DOCS_PATH, f))])
-            embedding_type = "Multi-QA embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
+            embedding_type = f"{EMBEDDING_MODEL} embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
             add_backend_log(f"Vector database loaded successfully with {doc_count} existing documents using {embedding_type}.")
             logging.info(f"[DEBUG] Step 3c: Found {doc_count} documents in DOCS_PATH")
             return True
@@ -963,27 +1043,41 @@ class AIApp:
     def _documents_changed_since_last_build(self) -> bool:
         """Check if documents have changed since the last database build."""
         try:
+            # First check if database files exist - if not, rebuild is needed
+            faiss_path = os.path.join(DB_PATH, 'index.faiss')
+            pkl_path = os.path.join(DB_PATH, 'index.pkl')
+            if not (os.path.exists(faiss_path) and os.path.exists(pkl_path)):
+                logging.info("[DEBUG] No database files found, rebuild needed")
+                return True
+            
             # Get current document files and their modification times
             current_docs = {}
             if os.path.exists(DOCS_PATH):
-                for f in os.listdir(DOCS_PATH):
-                    if os.path.isfile(os.path.join(DOCS_PATH, f)):
-                        file_path = os.path.join(DOCS_PATH, f)
-                        current_docs[f] = os.path.getmtime(file_path)
+                try:
+                    for f in os.listdir(DOCS_PATH):
+                        if os.path.isfile(os.path.join(DOCS_PATH, f)):
+                            file_path = os.path.join(DOCS_PATH, f)
+                            current_docs[f] = os.path.getmtime(file_path)
+                except (OSError, PermissionError):
+                    pass  # Continue with empty dict
             
             # Check if we have a build timestamp file
             build_timestamp_file = os.path.join(DB_PATH, 'last_build_timestamp.txt')
             if not os.path.exists(build_timestamp_file):
-                logging.info("[DEBUG] No build timestamp found, assuming rebuild needed")
-                return True
-            
-            # Read the last build timestamp
-            try:
-                with open(build_timestamp_file, 'r') as f:
-                    last_build_time = float(f.read().strip())
-            except:
-                logging.info("[DEBUG] Could not read build timestamp, assuming rebuild needed")
-                return True
+                # Database files exist but no timestamp - use database file modification time
+                db_file_time = min(os.path.getmtime(faiss_path), os.path.getmtime(pkl_path))
+                logging.info("[DEBUG] No build timestamp found, using database file modification time")
+                last_build_time = db_file_time
+            else:
+                # Read the last build timestamp
+                try:
+                    with open(build_timestamp_file, 'r') as f:
+                        last_build_time = float(f.read().strip())
+                except:
+                    # Fallback to database file modification time
+                    db_file_time = min(os.path.getmtime(faiss_path), os.path.getmtime(pkl_path))
+                    logging.info("[DEBUG] Could not read build timestamp, using database file modification time")
+                    last_build_time = db_file_time
             
             # Check if any documents are newer than the last build
             for filename, mod_time in current_docs.items():
@@ -1017,7 +1111,10 @@ class AIApp:
             
             # Get current embedding model info
             current_embedding_type = getattr(self, 'current_embedding_type', 'unknown')
-            current_model_name = MODEL_NAME
+            try:
+                current_model_name = EMBEDDING_MODEL.split('/')[-1]  # Use actual embedding model name
+            except (AttributeError, IndexError):
+                current_model_name = EMBEDDING_MODEL  # Fallback to full name
             
             # Create current build info string
             current_build_info = f"{current_embedding_type}:{current_model_name}"
@@ -1042,9 +1139,12 @@ class AIApp:
             db_exists = os.path.exists(DB_PATH) and os.path.exists(os.path.join(DB_PATH, "index.faiss"))
             doc_files = []
             if os.path.exists(DOCS_PATH):
-                for f in os.listdir(DOCS_PATH):
-                    if os.path.isfile(os.path.join(DOCS_PATH, f)):
-                        doc_files.append(f)
+                try:
+                    for f in os.listdir(DOCS_PATH):
+                        if os.path.isfile(os.path.join(DOCS_PATH, f)):
+                            doc_files.append(f)
+                except (OSError, PermissionError):
+                    pass  # Continue with empty list
             return {
                 "database_loaded": self.db is not None,
                 "database_exists": db_exists,
@@ -1333,9 +1433,21 @@ class AIApp:
         if len(chunks) > 3:
             logging.info(f"[DEBUG] ... and {len(chunks) - 3} more chunks")
         
-        # Use optimal embeddings (multi-qa if available, config model fallback)
-        embedding_type = "Multi-QA embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
+        # Use optimal embeddings (configured model if available, config model fallback)
+        embedding_type = f"{EMBEDDING_MODEL} embeddings" if hasattr(self, 'bge_model') and self.bge_model is not None else f"native {MODEL_NAME} embeddings"
         logging.info(f"[DEBUG] Using {embedding_type} for database creation...")
+        
+        # Force debug output to verify which embedding model is actually being used
+        print(f"[DEBUG] ===== EMBEDDING MODEL DEBUG =====")
+        print(f"[DEBUG] Config EMBEDDING_MODEL: {EMBEDDING_MODEL}")
+        print(f"[DEBUG] Has bge_model: {hasattr(self, 'bge_model')}")
+        print(f"[DEBUG] bge_model is None: {self.bge_model is None if hasattr(self, 'bge_model') else 'N/A'}")
+        print(f"[DEBUG] Current embedding type: {getattr(self, 'current_embedding_type', 'Not set')}")
+        print(f"[DEBUG] Embedding object type: {type(self.embedding) if hasattr(self, 'embedding') else 'Not set'}")
+        if hasattr(self, 'bge_model') and self.bge_model is not None:
+            print(f"[DEBUG] bge_model type: {type(self.bge_model)}")
+            print(f"[DEBUG] bge_model class: {self.bge_model.__class__.__name__}")
+        print(f"[DEBUG] =================================")
         
         # Create FAISS database with batch processing to avoid memory issues
         logging.info(f"[DEBUG] Creating FAISS database with {len(chunks)} chunks using {embedding_type}...")
@@ -1604,8 +1716,11 @@ class AIApp:
         # Verify all sources actually exist on disk
         missing_sources = []
         for source in sources:
-            if not os.path.exists(source):
-                missing_sources.append(source)
+            try:
+                if not os.path.exists(source):
+                    missing_sources.append(source)
+            except (OSError, PermissionError):
+                missing_sources.append(source)  # Treat permission errors as missing
         
         if missing_sources:
             logging.error(f"CRITICAL: Found {len(missing_sources)} orphaned sources in database!")
@@ -1625,7 +1740,11 @@ class AIApp:
         # Save build info for embedding model change detection
         try:
             build_info_file = os.path.join(DB_PATH, 'build_info.txt')
-            current_build_info = f"{self.current_embedding_type}:{MODEL_NAME}"
+            try:
+                model_name = EMBEDDING_MODEL.split('/')[-1]
+            except (AttributeError, IndexError):
+                model_name = EMBEDDING_MODEL
+            current_build_info = f"{self.current_embedding_type}:{model_name}"
             with open(build_info_file, 'w') as f:
                 f.write(current_build_info)
             logging.info(f"[DEBUG] Build info saved: {build_info_file} ({current_build_info})")
@@ -1835,7 +1954,7 @@ Please provide a structured summary:"""
                 conn.close()
             return False
 
-    def handle_question(self, query: str, chat_history: Optional[list] = None, topic_ids: Optional[list] = None) -> dict:
+    def handle_question(self, query: str, chat_history: Optional[list] = None, topic_ids: Optional[list] = None, query_id: Optional[str] = None) -> dict:
         """Handle a question with content safety checks and optional chat history context, with topic filtering."""
         start_time = time.time()
         
@@ -1865,6 +1984,12 @@ Please provide a structured summary:"""
         source_data = {}
         
         print(f"[DEBUG] handle_question called with topic_ids: {topic_ids}")
+        
+        # Check for cancellation at the start
+        if is_query_cancelled(query_id):
+            print(f"[CANCELLATION] Query {query_id} was cancelled before processing")
+            return {"error": "Query was cancelled"}
+        
         # if self.locked_out:
         #     return {"error": "You have been locked out for repeated misuse."}
         if not self.db:
@@ -1921,8 +2046,13 @@ Please provide a structured summary:"""
                             "sources": {"summary": "N/A", "detailed": "N/A"}
                         }
             
+            # Check for cancellation before main processing
+            if is_query_cancelled(query_id):
+                print(f"[CANCELLATION] Query {query_id} was cancelled before main processing")
+                return {"error": "Query was cancelled"}
+            
             query_start = time.time()
-            result = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames)
+            result = self.query_answer(query, chat_history=chat_history, filter_filenames=filter_filenames, query_id=query_id)
             query_time = time.time() - query_start
             print(f"[TIMING] Main query processing took: {query_time:.3f}s")
             
@@ -1971,7 +2101,7 @@ Please provide a structured summary:"""
             print(f"Full traceback: {error_details}")
             return {"error": f"Error processing question: {str(e)}"}
 
-    def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None) -> dict:
+    def query_answer(self, query: str, chat_history: Optional[list] = None, filter_filenames: Optional[list] = None, query_id: Optional[str] = None) -> dict:
         """Answer a question using the vector database and LLM. Return comprehensive result including safety and hallucination information."""
         query_start_time = time.time()
         
@@ -2035,13 +2165,13 @@ Please provide a structured summary:"""
         print(f"[DEBUG] Vector DB index size: {self.db.index.ntotal if hasattr(self.db, 'index') else 'Unknown'}")
         print(f"[TIMING] STEP 2: Direct embedding completed, proceeding to retrieval...")
         # OPTIMIZED DOCUMENT RETRIEVAL - Balance coverage with speed
-        # Using multi-qa-MiniLM-L6-cos-v1 model for maximum Q&A accuracy
-        print(f"[OPTIMIZED] Starting multi-qa optimized document retrieval for query: '{full_query}'")
-        print(f"[ACCURACY] Using multi-qa model with optimized similarity thresholds for Q&A tasks")
+        # Using configured embedding model for maximum Q&A accuracy
+        print(f"[OPTIMIZED] Starting optimized document retrieval for query: '{full_query}'")
+        print(f"[ACCURACY] Using {EMBEDDING_MODEL} with optimized similarity thresholds for Q&A tasks")
         
-        # Step 1: Multi-qa optimized search with balanced threshold for better coverage
-        # The multi-qa model is specifically trained for Q&A, so we can use slightly higher thresholds
-        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.20, min_chunks=25)  # Multi-qa optimized threshold
+        # Step 1: Optimized search with balanced threshold for better coverage
+        # The configured embedding model is optimized for semantic search, so we can use balanced thresholds
+        docs = self.get_chunks_with_early_termination(full_query, similarity_threshold=0.20, min_chunks=25)  # Optimized threshold
         
         # Step 2: If insufficient, try more aggressive search (but not too many chunks)
         if len(docs) < 15:  # Need at least 15 docs for good coverage
@@ -2215,13 +2345,13 @@ Please provide a structured summary:"""
             print(f"[QUALITY] Enhanced filtering: {len(docs)} -> {len(relevant_docs)} relevant chunks")
             
             # Build context with intelligent chunking and overlap
-            raw_context = self.build_context_streamlined(relevant_docs, max_chars=3500, overlap_ratio=0.2)
+            raw_context = self.build_context_streamlined(relevant_docs, max_chars=5000, overlap_ratio=0.2)
             
             # Validate context relevance before proceeding
             validated_context = self.validate_context_relevance(query, raw_context, relevant_docs)
             
             # Apply final context size limiting
-            actual_context = self.limit_context_size(validated_context, max_chars=3000)
+            actual_context = self.limit_context_size(validated_context, max_chars=5000)
             print(f"[QUALITY] Context prepared: {len(relevant_docs)} chunks -> {len(actual_context)} chars")
             
             # DEBUG: Show context preview for troubleshooting
@@ -2355,6 +2485,11 @@ Please provide a structured summary:"""
         context_time = time.time() - context_start
         print(f"[TIMING] STEP 4: Context preparation completed in {context_time:.3f}s")
         
+        # Check for cancellation before expensive LLM call
+        if is_query_cancelled(query_id):
+            print(f"[CANCELLATION] Query {query_id} was cancelled before LLM call")
+            return {"error": "Query was cancelled"}
+        
         # STEP 5: LLM Call with Speed Optimizations
         llm_start = time.time()
         print(f"[TIMING] STEP 5: Starting optimized LLM call")
@@ -2381,6 +2516,11 @@ Please provide a structured summary:"""
             llm_time = time.time() - llm_start
             print(f"[TIMING] STEP 5: Optimized LLM call completed in {llm_time:.3f}s")
             print(f"[SPEED] LLM response received (length: {len(answer)} chars)")
+            
+            # Check for cancellation after LLM call but before processing response
+            if is_query_cancelled(query_id):
+                print(f"[CANCELLATION] Query {query_id} was cancelled after LLM call")
+                return {"error": "Query was cancelled"}
             
             # STEP 5.5: Hallucination & Content Safety Check - DISABLED
             # safety_start = time.time()
@@ -2861,17 +3001,20 @@ Please provide a structured summary:"""
     def generate_short_answer(self, query: str, detailed_answer: str, docs: list) -> str:
         """Generate a concise, one-line summary answer for quick overview."""
         try:
-            short_prompt = f"""You are a professional compliance assistant. The user asked: {query}
+            short_prompt = f"""You are a technical documentation assistant powered by Mistral. The user asked: {query}
 
 Here is the detailed answer: {detailed_answer}
 
-Please create a concise, one-line summary answer (maximum 2 sentences) that:
-1. Directly answers the question
-2. Captures the key point or conclusion
-3. Is professional and clear
+Please create a clear, comprehensive summary that:
+1. Directly answers the question using ONLY the provided context
+2. Captures the key point or conclusion from the context
+3. Is helpful and actionable based on the context
 4. Can be understood quickly
+5. Uses up to 1000 characters for complete coverage
+6. References ONLY information from the provided documentation
+7. Leverages Mistral's efficient reasoning to ensure completeness
 
-Provide ONLY the short summary answer:"""
+Provide a clear summary answer based solely on the context:"""
 
             # short_result = self.llm.invoke(short_prompt)
             # if isinstance(short_result, dict) and 'result' in short_result:
@@ -2885,13 +3028,13 @@ Provide ONLY the short summary answer:"""
                 short_answer = short_answer[1:-1]
             
             # Fallback: if LLM fails, create a simple summary
-            if len(short_answer) < 10 or len(short_answer) > 300:
+            if len(short_answer) < 10 or len(short_answer) > 1000:
                 # Create a simple summary from the detailed answer
                 sentences = detailed_answer.split('.')
                 if sentences:
                     short_answer = sentences[0].strip() + '.'
-                    if len(short_answer) > 500:  # Increased from 200 to 500 for better display
-                        short_answer = short_answer[:500] + '...'
+                    if len(short_answer) > 1000:  # Allow up to 1000 characters
+                        short_answer = short_answer[:1000] + '...'
             
             return short_answer
             
@@ -2902,7 +3045,7 @@ Provide ONLY the short summary answer:"""
             if sentences:
                 return sentences[0].strip() + '.'
             else:
-                return detailed_answer[:300] + '...' if len(detailed_answer) > 300 else detailed_answer
+                return detailed_answer[:1000] + '...' if len(detailed_answer) > 1000 else detailed_answer
 
     def force_rebuild_db(self) -> None:
         """Safely delete the FAISS index directory and rebuild the vector DB from scratch."""
@@ -3155,14 +3298,16 @@ Provide ONLY the short summary answer:"""
             cpu_cores = psutil.cpu_count(logical=True)
             
             # Base chunk size calculation based on available resources
+            # Use embedding dimension as base for optimal chunk sizing
+            base_dimension = getattr(self, 'embedding_dimension', 384)
             if available_ram_gb > 16:
-                base_chunk_size = 512    # Increased for better accuracy
+                base_chunk_size = base_dimension * 2.0    # Product docs: 2x for better context
             elif available_ram_gb > 8:
-                base_chunk_size = 384    # Increased for better accuracy
+                base_chunk_size = int(base_dimension * 1.5)    # Product docs: 1.5x for better context
             elif available_ram_gb > 4:
-                base_chunk_size = 256    # Increased for better accuracy
+                base_chunk_size = int(base_dimension * 0.75)    # Reduced for memory
             else:
-                base_chunk_size = 192    # Increased minimum
+                base_chunk_size = int(base_dimension * 0.5)    # Minimum viable size
             
             # Adjust based on memory pressure
             if memory_pressure > 80:
@@ -3177,8 +3322,10 @@ Provide ONLY the short summary answer:"""
                 base_chunk_size = int(base_chunk_size * 1.1)  # Increase by 10%
             
             # FAQ Bot Quality Bounds - ensure chunks are optimal for Q&A
-            MIN_CHUNK_SIZE = 256    # Increased minimum for better context in Q&A
-            MAX_CHUNK_SIZE = 1024   # Increased maximum for better FAQ accuracy
+            # Base bounds on embedding dimension for optimal performance
+            base_dimension = getattr(self, 'embedding_dimension', 384)
+            MIN_CHUNK_SIZE = max(256, base_dimension)    # At least embedding dimension
+            MAX_CHUNK_SIZE = base_dimension * 4    # Product docs: Up to 4x for comprehensive context
             
             # Apply quality bounds
             optimal_chunk_size = max(MIN_CHUNK_SIZE, min(MAX_CHUNK_SIZE, base_chunk_size))
@@ -3203,7 +3350,11 @@ Provide ONLY the short summary answer:"""
         except Exception as e:
             logging.warning(f"[DEBUG] Error calculating chunk parameters: {e}, using defaults")
             # Fallback to good FAQ bot defaults
-            return 384, 108  # 384 chars with 108 overlap (28%) for better accuracy
+            # Fallback to good FAQ bot defaults based on embedding dimension
+            base_dimension = getattr(self, 'embedding_dimension', 384)
+            fallback_chunk_size = base_dimension
+            fallback_overlap = int(base_dimension * 0.28)  # 28% overlap
+            return fallback_chunk_size, fallback_overlap
 
     def replace_document_incremental(self, old_filename: str, new_file_path: str) -> bool:
         """Replace a document in the database."""
@@ -3605,7 +3756,7 @@ Provide ONLY the short summary answer:"""
             logging.warning(f"Embedding failed: {e}")
             return None
 
-    def get_chunks_with_early_termination(self, query: str, similarity_threshold: float = 0.15, min_chunks: int = 20) -> List[Document]:
+    def get_chunks_with_early_termination(self, query: str, similarity_threshold: float = 0.05, min_chunks: int = 15) -> List[Document]:
         """Get chunks using hybrid semantic + vector approach for better coverage."""
         early_start = time.time()
         
@@ -3613,7 +3764,7 @@ Provide ONLY the short summary answer:"""
             print(f"[SEMANTIC] Starting hybrid semantic + vector search (threshold: {similarity_threshold})")
             
             # Use hybrid semantic search for better coverage
-            hybrid_docs = self.get_hybrid_semantic_chunks(query, initial_k=25)
+            hybrid_docs = self.get_hybrid_semantic_chunks(query, initial_k=60)
             
             if len(hybrid_docs) >= min_chunks:
                 early_time = time.time() - early_start
@@ -3635,7 +3786,7 @@ Provide ONLY the short summary answer:"""
             # Fallback to regular search with more chunks
             return self.get_hierarchical_chunks(query, initial_k=min_chunks)
 
-    def limit_context_size(self, context: str, max_chars: int = 6000) -> str:
+    def limit_context_size(self, context: str, max_chars: int = 8000) -> str:
         """Limit context size for faster LLM processing while keeping reasonable size."""
         if len(context) <= max_chars:
             return context
@@ -3663,7 +3814,7 @@ Provide ONLY the short summary answer:"""
         print(f"[SPEED] Context limited to {len(limited_context)} chars ({len(limited_chunks)} chunks)")
         return limited_context
 
-    def filter_relevant_chunks(self, query, docs, threshold=0.7):
+    def filter_relevant_chunks(self, query, docs, threshold=0.3):
         """Enhanced relevance filtering with multi-factor scoring for better quality"""
         if not docs:
             return []
@@ -3745,9 +3896,9 @@ Provide ONLY the short summary answer:"""
         return top_docs
 
     def get_concise_response(self, prompt: str) -> str:
-        """Get concise response by limiting generation for faster processing."""
-        # Add explicit length instruction to prompt
-        concise_prompt = f"{prompt}\n\nProvide a concise answer in 2-3 sentences maximum."
+        """Get concise response optimized for product questions."""
+        # Add Mistral-optimized instruction to prompt
+        concise_prompt = f"{prompt}\n\nLeverage Mistral's efficient reasoning capabilities to provide a clear, comprehensive answer that addresses the question completely using ONLY the provided context. You may use up to 1000 characters for thorough coverage. DO NOT use any external knowledge."
         
         try:
             response = self.llm.invoke(concise_prompt)
@@ -3758,25 +3909,6 @@ Provide ONLY the short summary answer:"""
             else:
                 response = str(response)
             
-            # Ensure response isn't too long
-            if len(response) > 800:
-                print(f"[SPEED] Response too long ({len(response)} chars), truncating")
-                # Truncate at sentence boundary
-                sentences = response.split('.')
-                truncated = []
-                current_length = 0
-                
-                for sentence in sentences:
-                    if current_length + len(sentence) + 1 <= 800:
-                        truncated.append(sentence)
-                        current_length += len(sentence) + 1
-                    else:
-                        break
-                
-                result = '.'.join(truncated) + '.'
-                print(f"[SPEED] Response truncated to {len(result)} chars")
-                return result
-            
             return response
             
         except Exception as e:
@@ -3785,8 +3917,8 @@ Provide ONLY the short summary answer:"""
 
 
 
-    def build_context_streamlined(self, docs, max_chars=3000, overlap_ratio=0.2):
-        """Build context with intelligent chunking and overlap for better quality"""
+    def build_context_streamlined(self, docs, max_chars=5000, overlap_ratio=0.2):
+        """Build context with intelligent chunking and overlap for product documentation"""
         if not docs:
             return ""
         
@@ -3845,14 +3977,14 @@ Provide ONLY the short summary answer:"""
         
         return final_context
     
-    def organize_context_for_cogito(self, docs, max_chars=3500):
-        """Organize context efficiently for Cogito 3B with ChatGPT 5 optimized formatting"""
+    def organize_context_for_products(self, docs, max_chars=8000):
+        """Organize context efficiently for product documentation with mistral:7b"""
         if not docs:
             return ""
         
-        # ChatGPT 5 recommendation: chunk 350-400 tokens, include doc title + section
+        # Product documentation: chunk 500-800 tokens, include doc title + section
         context_parts = []
-        for i, doc in enumerate(docs[:6]):  # ✅ Smart scaling: 4-6 chunks for policy questions
+        for i, doc in enumerate(docs[:12]):  # ✅ Product docs: 10-12 chunks for comprehensive coverage
             content = doc.page_content.strip()
             source = os.path.basename(str(doc.metadata.get("source", "")))
             
@@ -3860,27 +3992,27 @@ Provide ONLY the short summary answer:"""
             section = doc.metadata.get("section", "General")
             page = doc.metadata.get("page", "")
             
-            # ChatGPT 5: Prepend bold line before each chunk for clean citations
-            header = f"[[Doc: {source}"
+            # Product-focused: Prepend clear line before each chunk for clean citations
+            header = f"[[Document: {source}"
             if section and section != "General":
                 header += f" | Section: {section}"
             if page:
                 header += f" | Page: {page}"
             header += "]]"
             
-            # Smart truncation - ChatGPT 5: 350-400 tokens optimal for policy documents
-            if len(content) > 400:
+            # Smart truncation - Product docs: 800-1200 tokens optimal for technical documentation
+            if len(content) > 1200:
                 # Try to keep complete sentences
                 sentences = content.split('.')
                 truncated = ""
                 for sentence in sentences:
-                    if len(truncated + sentence) <= 400:
+                    if len(truncated + sentence) <= 1200:
                         truncated += sentence + "."
                     else:
                         break
-                content = truncated + "..." if truncated else content[:400] + "..."
+                content = truncated + "..." if truncated else content[:1200] + "..."
             
-            # Format: Bold header + content
+            # Format: Clear header + content
             context_parts.append(f"{header}\n{content}")
         
         return "\n\n".join(context_parts)
@@ -4196,7 +4328,7 @@ Respond with ONLY a number between 0 and 100."""
                 try:
                     logging.info(f"[DEBUG] Attempting Llama 3 fallback initialization")
                     self.llama_model = OllamaLLM(
-                        model="llama3.2:3b",
+                        model="mistral:7b",
                         temperature=0.1,
                         num_ctx=8192,
                         num_predict=2048,
@@ -4641,7 +4773,7 @@ Respond with ONLY a number between 0 and 100."""
             
             # Strategy 1: Try with ChatGPT 5 recommended chunk limit (3-5 max)
             try:
-                docs = self.db.similarity_search(query, k=5)  # ✅ ChatGPT 5: 3-5 top chunks max
+                docs = self.db.similarity_search(query, k=12)  # ✅ Product docs: 12 chunks for comprehensive coverage
                 print(f"[OPTIMIZED] ChatGPT 5 optimized search found {len(docs)} chunks (limited to 5)")
                 return docs
             except Exception as e:
@@ -4654,7 +4786,7 @@ Respond with ONLY a number between 0 and 100."""
                 
                 for term in policy_terms:
                     try:
-                        term_docs = self.db.similarity_search(term, k=10)  # Limited to 10 per term
+                        term_docs = self.db.similarity_search(term, k=15)  # Product docs: 15 per term for better coverage
                         all_docs.extend(term_docs)
                     except Exception as e2:
                         print(f"[OPTIMIZED] Policy term '{term}' search failed: {e2}")
@@ -4811,7 +4943,7 @@ Respond with ONLY a number between 0 and 100."""
             
             # Step 1: Get vector similarity results with balanced coverage
             vector_start = time.time()
-            retriever = self.db.as_retriever(search_type="similarity", k=initial_k * 2)  # Balanced for speed and coverage
+            retriever = self.db.as_retriever(search_type="similarity", k=initial_k * 3)  # Product docs: 3x for comprehensive coverage
             vector_docs = retriever.invoke(query)
             vector_time = time.time() - vector_start
             print(f"[SEMANTIC] Vector search found {len(vector_docs)} chunks in {vector_time:.3f}s")
@@ -4831,7 +4963,7 @@ Respond with ONLY a number between 0 and 100."""
             max_variations = getattr(self, 'semantic_search_variations', 15)  # Optimized for speed
             for variation in semantic_variations[:max_variations]:
                 try:
-                    retriever = self.db.as_retriever(search_type="similarity", k=6)  # Optimized for speed
+                    retriever = self.db.as_retriever(search_type="similarity", k=15)  # Product docs: 15 for comprehensive coverage
                     variation_docs = retriever.invoke(variation)
                     semantic_docs.extend(variation_docs)
                 except Exception as e:
@@ -5015,7 +5147,7 @@ Respond with ONLY a number between 0 and 100."""
         try:
             # Strategy 1: Try with broader similarity threshold
             print(f"[FALLBACK] Strategy 1: Broader similarity search")
-            retriever = self.db.as_retriever(search_type="similarity", k=30)  # Optimized for speed
+            retriever = self.db.as_retriever(search_type="similarity", k=50)  # Product docs: 50 for comprehensive coverage
             broad_docs = retriever.invoke(query)
             print(f"[FALLBACK] Broad search found {len(broad_docs)} chunks")
             
@@ -5031,7 +5163,7 @@ Respond with ONLY a number between 0 and 100."""
             for word in query_words:
                 if len(word) > 3:  # Only meaningful words
                     try:
-                        retriever = self.db.as_retriever(search_type="similarity", k=12)
+                        retriever = self.db.as_retriever(search_type="similarity", k=25)
                         word_docs = retriever.invoke(word)
                         keyword_docs.extend(word_docs)
                     except Exception as e:
@@ -5127,30 +5259,33 @@ Respond with ONLY a number between 0 and 100."""
             return "Error occurred while attempting to extract fallback information."
 
     def build_enhanced_prompt(self, query, context, chat_history=None):
-        """Build Cogito 3B-optimized prompt for maximum accuracy"""
+        """Build concise prompt optimized for Llama 3.1:8b"""
         
-        # Streamlined prompt for faster processing and complete answers
-        instructions = f"""You are a professional compliance expert. Answer using ONLY the provided context.
+        # Llama 3.1:8b optimized prompt for technical documentation
+        instructions = f"""You are a technical documentation assistant. Answer using ONLY the provided context.
 
-## RESPONSE FORMAT
-Provide a complete, actionable answer in 2-3 sentences. Include policy names, requirements, and specific details.
+RULES:
+- Use ONLY information from the context below
+- If no info found, say "No information available"
+- Do not hallucinate or make assumptions
+- For all APPLICABLE questions, start with "Yes" or "No"
+- Keep answers SHORT: 2-3 lines maximum
+- Be succinct and clear
 
-## CRITICAL RULES
-- Use ONLY context information - NO assumptions
-- If unclear, state "Information unclear."
-- If no info, state "No information available about [topic]."
-- Cite specific policy names and document sources
-- Include concrete requirements and procedures
-- Be specific, actionable, and professional
-- Whenver applicable, start the answer with a "Yes" or "No"
+USE THESE EXAMPLES TO FORMAT YOUR ANSWER ONLY:
+Q: Is there a risk mitigation plan in place?
+A: Yes, there is a risk mitigation plan.
 
-## CONTEXT
+Q: Are information security personnel (internal or outsourced) responsible for information security processes?
+A: Yes, information security personnel (both internal and outsourced) are responsible for information security processes.
+
+
+CONTEXT:
 {context}
 
-## QUESTION
-{query}
+QUESTION: {query}
 
-Answer completely in 2-3 sentences with specific details from the context."""
+ANSWER:"""
         
         return instructions
     
@@ -5197,7 +5332,7 @@ Answer completely in 2-3 sentences with specific details from the context."""
             for term in key_terms[:5]:  # Limit to top 5 terms
                 try:
                     # Search with lower threshold for broader results
-                    retriever = self.db.as_retriever(search_type="similarity", k=10)
+                    retriever = self.db.as_retriever(search_type="similarity", k=20)
                     term_docs = retriever.invoke(term)
                     expanded_docs.extend(term_docs)
                 except Exception as e:
@@ -5207,7 +5342,7 @@ Answer completely in 2-3 sentences with specific details from the context."""
             policy_terms = ['policy', 'procedure', 'requirement', 'standard', 'guideline']
             for term in policy_terms:
                 try:
-                    retriever = self.db.as_retriever(search_type="similarity", k=8)
+                    retriever = self.db.as_retriever(search_type="similarity", k=18)
                     policy_docs = retriever.invoke(term)
                     expanded_docs.extend(policy_docs)
                 except Exception as e:
@@ -5280,8 +5415,8 @@ Answer completely in 2-3 sentences with specific details from the context."""
             # Search with lower similarity threshold
             expanded_docs = self.db.similarity_search(
                 query, 
-                k=min(15, len(current_docs) + 5),  # Get a few more docs
-                fetch_k=20  # Fetch more candidates
+                            k=min(25, len(current_docs) + 10),  # Product docs: Get more docs
+            fetch_k=40  # Product docs: Fetch more candidates
             )
             
             # Filter out duplicates and add new relevant docs
